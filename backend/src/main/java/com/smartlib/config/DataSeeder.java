@@ -35,6 +35,9 @@ public class DataSeeder implements CommandLineRunner {
         log.info("Seeding users...");
         userRepository.saveAll(List.of(
             User.builder().name("Aarav Student").email("aarav@smartlib.test").role(Role.STUDENT).build(),
+            User.builder().name("Diya Student").email("diya@smartlib.test").role(Role.STUDENT).build(),
+            User.builder().name("Kabir Student").email("kabir@smartlib.test").role(Role.STUDENT).build(),
+            User.builder().name("Isha Student").email("isha@smartlib.test").role(Role.STUDENT).build(),
             User.builder().name("Meera Librarian").email("meera@smartlib.test").role(Role.LIBRARIAN).build()
         ));
         log.info("Users seeded.");

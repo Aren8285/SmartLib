@@ -20,12 +20,20 @@ export default function Navbar() {
       <div className="navbar__links">
         <Link to="/books">Books</Link>
         {currentUser?.role === 'STUDENT' && (
-          <Link to="/my-loans">My Loans</Link>
+          <>
+            <Link to="/my-loans">My Loans</Link>
+            <Link to="/my-fines">My Fines</Link>
+          </>
         )}
         {currentUser?.role === 'LIBRARIAN' && (
           <Link to="/librarian">Librarian Dashboard</Link>
         )}
       </div>
+      {currentUser?.role === 'STUDENT' && (
+        <div className="navbar__points" title="Loyalty points">
+          ⭐ {currentUser.points} pts
+        </div>
+      )}
       <div className="navbar__user">
         <select
           value={currentUser?.id || ''}
@@ -42,4 +50,3 @@ export default function Navbar() {
     </nav>
   );
 }
-

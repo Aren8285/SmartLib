@@ -7,9 +7,10 @@ public enum LoanStatus {
     ISSUED,
     OVERDUE,
     RETURNED,
+    FINE_PENDING,
     LOST,
     EXPIRED,
     CANCELLED,
-    CLOSED
+    CLOSED,
+    REFLECTION_PENDING
 }
-

@@ -1,6 +1,7 @@
 package com.smartlib.service;
 
 import com.smartlib.dto.UserResponse;
+import com.smartlib.exception.ResourceNotFoundException;
 import com.smartlib.model.User;
 import com.smartlib.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
@@ -21,6 +22,11 @@ public class UserService {
                 .collect(Collectors.toList());
     }
 
+    public User getUser(String id) {
+        return userRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("User not found: " + id));
+    }
+
     public UserResponse toResponse(User user) {
         UserResponse r = new UserResponse();
         r.setId(user.getId());
@@ -31,4 +37,3 @@ public class UserService {
         return r;
     }
 }
-

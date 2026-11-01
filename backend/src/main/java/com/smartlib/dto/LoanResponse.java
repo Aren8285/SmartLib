@@ -18,5 +18,10 @@ public class LoanResponse {
     private Instant issueDate;
     private Instant dueDate;
     private Instant returnDate;
+    private Instant pickupDeadline;
+    private Integer queuePosition;
+    private Double accruedFine;
+    private FineDto fine;
+    private String message;
 }
 

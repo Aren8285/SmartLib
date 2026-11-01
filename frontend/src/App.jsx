@@ -4,6 +4,7 @@ import { UserProvider } from './context/UserContext';
 import Navbar from './components/Navbar';
 import BooksPage from './pages/BooksPage';
 import MyLoansPage from './pages/MyLoansPage';
+import MyFinesPage from './pages/MyFinesPage';
 import LibrarianPage from './pages/LibrarianPage';
 
 export default function App() {
@@ -16,6 +17,7 @@ export default function App() {
             <Route path="/" element={<Navigate to="/books" replace />} />
             <Route path="/books" element={<BooksPage />} />
             <Route path="/my-loans" element={<MyLoansPage />} />
+            <Route path="/my-fines" element={<MyFinesPage />} />
             <Route path="/librarian" element={<LibrarianPage />} />
           </Routes>
         </main>

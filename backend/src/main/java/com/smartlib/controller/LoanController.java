@@ -45,9 +45,13 @@ public class LoanController {
         return loanService.returnLoan(id, dto);
     }
 
+    @PostMapping("/{id}/lost")
+    public LoanResponse lostLoan(@PathVariable String id, @Valid @RequestBody LibrarianActionDto dto) {
+        return loanService.lostLoan(id, dto);
+    }
+
     @PostMapping("/{id}/cancel")
     public LoanResponse cancelLoan(@PathVariable String id, @Valid @RequestBody StudentActionDto dto) {
         return loanService.cancelLoan(id, dto);
     }
 }
-

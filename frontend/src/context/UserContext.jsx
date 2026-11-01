@@ -1,5 +1,5 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
-import { getUsers } from '../api';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { getUsers, getUser } from '../api';
 
 const UserContext = createContext(null);
 
@@ -24,11 +24,26 @@ export function UserProvider({ children }) {
 
   const selectUser = (user) => {
     setCurrentUser(user);
-    localStorage.setItem('smartlib_user', JSON.stringify(user));
+    if (user) {
+      localStorage.setItem('smartlib_user', JSON.stringify(user));
+    } else {
+      localStorage.removeItem('smartlib_user');
+    }
   };
 
+  // Re-fetch the current user so points / state stay fresh after actions.
+  const refreshUser = useCallback(() => {
+    if (!currentUser) return;
+    getUser(currentUser.id)
+      .then((fresh) => {
+        setCurrentUser(fresh);
+        localStorage.setItem('smartlib_user', JSON.stringify(fresh));
+      })
+      .catch(console.error);
+  }, [currentUser]);
+
   return (
-    <UserContext.Provider value={{ users, currentUser, selectUser, loading }}>
+    <UserContext.Provider value={{ users, currentUser, selectUser, refreshUser, loading }}>
       {children}
     </UserContext.Provider>
   );
@@ -37,4 +52,3 @@ export function UserProvider({ children }) {
 export function useUser() {
   return useContext(UserContext);
 }
-

@@ -29,5 +29,11 @@ public class Loan {
     private Instant issueDate;
     private Instant dueDate;
     private Instant returnDate;
+
+    /** Set when a copy is reserved (READY_FOR_PICKUP), not only when issued. */
+    private Instant pickupDeadline;
+
+    /** Nullable; set when a fine (late return / lost book) is attached to the loan. */
+    private String fineId;
 }
 

@@ -15,8 +15,16 @@ public class BookController {
     private final BookService bookService;
 
     @GetMapping
-    public List<BookResponse> getBooks(@RequestParam(required = false) String query) {
-        return bookService.getBooks(query);
+    public List<BookResponse> getBooks(
+            @RequestParam(required = false) String query,
+            @RequestParam(required = false) String subject,
+            @RequestParam(required = false, name = "availableOnly") Boolean availableOnly) {
+        return bookService.getBooks(query, subject, Boolean.TRUE.equals(availableOnly));
+    }
+
+    @GetMapping("/subjects")
+    public List<String> getSubjects() {
+        return bookService.getSubjects();
     }
 
     @GetMapping("/{id}")
@@ -24,4 +32,3 @@ public class BookController {
         return bookService.getBook(id);
     }
 }
-
