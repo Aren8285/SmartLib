@@ -10,6 +10,7 @@ public class BookResponse {
     private String subject;
     private String isbn;
     private long availableCopies;
+    private long totalCopies;
     private long waitlistSize;
 }
 

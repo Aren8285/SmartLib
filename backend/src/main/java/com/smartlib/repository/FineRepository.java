@@ -13,4 +13,6 @@ public interface FineRepository extends MongoRepository<Fine, String> {
     List<Fine> findByStatusOrderByIssueDateDesc(FineStatus status);
 
     long countByStudentIdAndStatus(String studentId, FineStatus status);
+
+    long countByStatus(FineStatus status);
 }

@@ -1,11 +1,19 @@
 package com.smartlib.controller;
 
+import com.smartlib.dto.AddCopiesDto;
+import com.smartlib.dto.BookRequestDto;
 import com.smartlib.dto.BookResponse;
+import com.smartlib.dto.CopyDto;
+import com.smartlib.dto.UpdateCopyStatusDto;
 import com.smartlib.service.BookService;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/books")
@@ -30,5 +38,39 @@ public class BookController {
     @GetMapping("/{id}")
     public BookResponse getBook(@PathVariable String id) {
         return bookService.getBook(id);
+    }
+
+    // ─────────── management (LIBRARIAN) ───────────
+
+    @PostMapping
+    @PreAuthorize("hasRole('LIBRARIAN')")
+    @ResponseStatus(HttpStatus.CREATED)
+    public BookResponse create(@Valid @RequestBody BookRequestDto dto) {
+        return bookService.create(dto);
+    }
+
+    @PutMapping("/{id}")
+    @PreAuthorize("hasRole('LIBRARIAN')")
+    public BookResponse update(@PathVariable String id, @Valid @RequestBody BookRequestDto dto) {
+        return bookService.update(id, dto);
+    }
+
+    @DeleteMapping("/{id}")
+    @PreAuthorize("hasRole('LIBRARIAN')")
+    public Map<String, Object> delete(@PathVariable String id) {
+        bookService.delete(id);
+        return Map.of("deleted", true);
+    }
+
+    @GetMapping("/{id}/copies")
+    @PreAuthorize("hasRole('LIBRARIAN')")
+    public List<CopyDto> getCopies(@PathVariable String id) {
+        return bookService.getCopies(id);
+    }
+
+    @PostMapping("/{id}/copies")
+    @PreAuthorize("hasRole('LIBRARIAN')")
+    public List<CopyDto> addCopies(@PathVariable String id, @Valid @RequestBody AddCopiesDto dto) {
+        return bookService.addCopies(id, dto);
     }
 }

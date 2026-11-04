@@ -1,12 +1,8 @@
 package com.smartlib.service;
 
 import com.smartlib.config.AppProperties;
-import com.smartlib.model.Copy;
-import com.smartlib.model.CopyStatus;
-import com.smartlib.model.Loan;
-import com.smartlib.model.LoanStatus;
-import com.smartlib.model.WaitlistEntry;
-import com.smartlib.model.WaitlistStatus;
+import com.smartlib.model.*;
+import com.smartlib.repository.BookRepository;
 import com.smartlib.repository.CopyRepository;
 import com.smartlib.repository.LoanRepository;
 import com.smartlib.repository.UserRepository;
@@ -33,6 +29,8 @@ public class WaitlistService {
     private final LoanRepository loanRepository;
     private final UserRepository userRepository;
     private final CopyRepository copyRepository;
+    private final BookRepository bookRepository;
+    private final NotificationService notificationService;
     private final AppProperties app;
 
     public WaitlistEntry join(String bookId, String studentId, String loanId) {
@@ -119,6 +117,15 @@ public class WaitlistService {
                 copyRepository.save(copy);
             }
         });
+
+        String bookTitle = bookRepository.findById(promoted.getBookId()).map(Book::getTitle).orElse("your book");
+        notificationService.create(promoted.getStudentId(), NotificationType.PROMOTED,
+                "It's your turn: pick up " + bookTitle,
+                "You moved up the queue for \"" + bookTitle + "\". The copy is held for you until "
+                        + java.time.format.DateTimeFormatter.ofPattern("MMM d, HH:mm")
+                                .withZone(java.time.ZoneId.systemDefault())
+                                .format(promoted.getPickupDeadline()) + ".",
+                promoted.getId());
 
         log.info("Promoted waitlist entry {} : loan {} is now READY_FOR_PICKUP, holding copy {}.", next.getId(), promoted.getId(), copyId);
         return promoted;

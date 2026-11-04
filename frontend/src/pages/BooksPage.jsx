@@ -1,145 +1,122 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { getBooks, getSubjects, requestLoan, getFines } from '../api';
-import { useUser } from '../context/UserContext';
+import { getBooks, getSubjects, requestLoan } from '../api';
 import Toast from '../components/Toast';
 
 export default function BooksPage() {
-  const { currentUser } = useUser();
   const [books, setBooks] = useState([]);
   const [subjects, setSubjects] = useState([]);
-  const [query, setQuery] = useState('');
-  const [subject, setSubject] = useState('');
-  const [availableOnly, setAvailableOnly] = useState(false);
-  const [pendingFines, setPendingFines] = useState(false);
+  const [filters, setFilters] = useState({ query: '', subject: '', availableOnly: false });
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState({ message: '', type: 'success' });
-
-  const isStudent = currentUser?.role === 'STUDENT';
+  const [busy, setBusy] = useState('');
+  const [error, setError] = useState('');
+  const [expanded, setExpanded] = useState(null);
 
   const fetchBooks = useCallback(() => {
     setLoading(true);
-    getBooks({ query, subject, availableOnly })
+    getBooks(filters)
       .then(setBooks)
-      .catch((e) => setToast({ message: e.message, type: 'error' }))
+      .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
-  }, [query, subject, availableOnly]);
+  }, [filters]);
 
-  useEffect(() => { fetchBooks(); }, [fetchBooks]);
-
+  useEffect(() => { getSubjects().then(setSubjects).catch(() => {}); }, []);
   useEffect(() => {
-    getSubjects().then(setSubjects).catch(console.error);
-  }, []);
+    const t = setTimeout(fetchBooks, 250); // debounce while typing
+    return () => clearTimeout(t);
+  }, [fetchBooks]);
 
-  // Banner: pending fines block new requests for students.
-  useEffect(() => {
-    if (!isStudent || !currentUser) { setPendingFines(false); return; }
-    getFines({ studentId: currentUser.id })
-      .then((fines) => setPendingFines(fines.some((f) => f.status === 'PENDING')))
-      .catch(console.error);
-  }, [isStudent, currentUser]);
-
-  const handleRequest = async (bookId) => {
-    if (!currentUser) {
-      setToast({ message: 'Please select a user from the navbar first.', type: 'error' });
-      return;
-    }
+  const request = async (book) => {
+    setBusy(book.id);
     try {
-      const result = await requestLoan(currentUser.id, bookId);
-      setToast({
-        message: result.message || 'Request placed!',
-        type: result.status === 'WAITLISTED' ? 'info' : 'success',
-      });
+      const res = await requestLoan(book.id);
+      setToast({ message: res.message || 'Requested.', type: 'success' });
       fetchBooks();
+      setExpanded(null);
     } catch (e) {
       setToast({ message: e.message, type: 'error' });
+    } finally {
+      setBusy('');
     }
   };
 
   return (
     <div className="page">
-      <Toast
-        message={toast.message}
-        type={toast.type}
-        onClose={() => setToast({ message: '', type: 'success' })}
-      />
-      <h1>Book Catalogue</h1>
-
-      {isStudent && pendingFines && (
-        <div className="banner banner--warning">
-          ⚠️ You have pending fines. Pay them on the <a href="/my-fines">My Fines</a> page
-          before requesting new books.
-        </div>
-      )}
+      <h1>Books</h1>
+      <Toast message={toast.message} type={toast.type} onClose={() => setToast({ message: '', type: 'success' })} />
+      {error && <div className="banner banner--warning">{error}</div>}
 
       <div className="filter-bar">
         <input
-          type="text"
-          className="filter-bar__search"
-          placeholder="Search by title or author…"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          className="search-bar__input"
+          placeholder="Search title, author, subject…"
+          value={filters.query}
+          onChange={(e) => setFilters({ ...filters, query: e.target.value })}
         />
-        <select value={subject} onChange={(e) => setSubject(e.target.value)}>
+        <select
+          value={filters.subject}
+          onChange={(e) => setFilters({ ...filters, subject: e.target.value })}
+        >
           <option value="">All subjects</option>
-          {subjects.map((s) => (
-            <option key={s} value={s}>{s}</option>
-          ))}
+          {subjects.map((s) => <option key={s} value={s}>{s}</option>)}
         </select>
-        <label className="filter-bar__check">
+        <label className="checkbox">
           <input
             type="checkbox"
-            checked={availableOnly}
-            onChange={(e) => setAvailableOnly(e.target.checked)}
+            checked={filters.availableOnly}
+            onChange={(e) => setFilters({ ...filters, availableOnly: e.target.checked })}
           />
           Available only
         </label>
       </div>
 
-      {loading ? (
-        <p className="loading">Loading…</p>
-      ) : books.length === 0 ? (
-        <p>No books found.</p>
-      ) : (
-        <table className="table">
-          <thead>
-            <tr>
-              <th>Title</th>
-              <th>Author</th>
-              <th>Subject</th>
-              <th>Available</th>
-              <th>Waitlist</th>
-              {isStudent && <th>Action</th>}
-            </tr>
-          </thead>
-          <tbody>
-            {books.map((book) => {
-              const canRequest = book.availableCopies > 0 && book.waitlistSize === 0;
-              return (
-                <tr key={book.id}>
-                  <td>{book.title}</td>
-                  <td>{book.author}</td>
-                  <td>{book.subject}</td>
-                  <td>
-                    <span className={book.availableCopies > 0 ? 'badge badge--green' : 'badge badge--red'}>
-                      {book.availableCopies}
-                    </span>
-                  </td>
-                  <td>{book.waitlistSize}</td>
-                  {isStudent && (
+      {loading ? <div className="loading">Loading…</div> : (
+        <>
+          {books.length === 0 && <p className="empty-state">Nothing here yet — try a different search.</p>}
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Title</th><th>Author</th><th>Subject</th><th>Available</th><th>Queue</th><th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {books.map((b) => (
+                <React.Fragment key={b.id}>
+                  <tr>
+                    <td>
+                      <button className="link-button" onClick={() => setExpanded(expanded === b.id ? null : b.id)}>
+                        {b.title}
+                      </button>
+                    </td>
+                    <td>{b.author}</td>
+                    <td>{b.subject}</td>
+                    <td className={b.availableCopies === 0 ? 'text-red' : ''}>{b.availableCopies}</td>
+                    <td>{b.waitlistSize > 0 ? `${b.waitlistSize} waiting` : '—'}</td>
                     <td>
                       <button
                         className="btn btn--primary"
-                        onClick={() => handleRequest(book.id)}
+                        disabled={busy === b.id}
+                        onClick={() => request(b)}
                       >
-                        {canRequest ? 'Request' : 'Join waitlist'}
+                        {busy === b.id ? '…' : b.availableCopies > 0 ? 'Request' : 'Join waitlist'}
                       </button>
                     </td>
+                  </tr>
+                  {expanded === b.id && (
+                    <tr className="detail-row">
+                      <td colSpan={6}>
+                        <div className="cell-detail">
+                          ISBN: {b.isbn || '—'} · {b.availableCopies} of the copies are on the shelf.
+                          {b.waitlistSize > 0 && ` ${b.waitlistSize} students waiting for it.`}
+                        </div>
+                      </td>
+                    </tr>
                   )}
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+                </React.Fragment>
+              ))}
+            </tbody>
+          </table>
+        </>
       )}
     </div>
   );

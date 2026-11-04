@@ -1,10 +1,10 @@
 package com.smartlib.controller;
 
 import com.smartlib.dto.WaitlistEntryDto;
-import com.smartlib.model.User;
 import com.smartlib.service.UserService;
 import com.smartlib.service.WaitlistService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 import java.util.stream.Collectors;
 
+/** Ordered FIFO queue for one book — a librarian view. */
 @RestController
 @RequestMapping("/api/waitlist")
 @RequiredArgsConstructor
@@ -21,8 +22,8 @@ public class WaitlistController {
     private final WaitlistService waitlistService;
     private final UserService userService;
 
-    /** Ordered FIFO queue for one book, oldest first. */
     @GetMapping("/book/{bookId}")
+    @PreAuthorize("hasRole('LIBRARIAN')")
     public List<WaitlistEntryDto> forBook(@PathVariable String bookId) {
         return waitlistService.queueFor(bookId).stream()
                 .map(entry -> {

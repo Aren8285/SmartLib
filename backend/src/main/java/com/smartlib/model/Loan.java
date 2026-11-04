@@ -1,9 +1,9 @@
 package com.smartlib.model;
 
-import lombok.Data;
-import lombok.NoArgsConstructor;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
+import lombok.Data;
+import lombok.NoArgsConstructor;
 import org.springframework.data.annotation.Id;
 import org.springframework.data.mongodb.core.mapping.Document;
 
@@ -33,7 +33,12 @@ public class Loan {
     /** Set when a copy is reserved (READY_FOR_PICKUP), not only when issued. */
     private Instant pickupDeadline;
 
-    /** Nullable; set when a fine (late return / lost book) is attached to the loan. */
+    /** One-time pickup reminder flag (used when the deadline is < 6h away). */
+    private boolean reminderSent;
+
+    /** One-time due-date reminder flag (used when the due date is < 24h away). */
+    private boolean dueReminderSent;
+
+    /** Nullable; set when a fine (late return / lost / damaged book) is attached to the loan. */
     private String fineId;
 }
-

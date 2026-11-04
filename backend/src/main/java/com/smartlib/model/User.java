@@ -8,6 +8,9 @@ import org.springframework.data.annotation.Id;
 import org.springframework.data.mongodb.core.mapping.Document;
 import org.springframework.data.mongodb.core.index.Indexed;
 
+import java.time.Instant;
+import java.util.List;
+
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
@@ -27,5 +30,15 @@ public class User {
 
     @Builder.Default
     private int points = 0;
+
+    // Iteration 3: real authentication + preferences
+    private String passwordHash;
+
+    private List<String> preferredSubjects;
+
+    private Instant createdAt;
+
+    @Builder.Default
+    private boolean active = true;
 }
 

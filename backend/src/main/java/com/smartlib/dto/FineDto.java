@@ -17,4 +17,7 @@ public class FineDto {
     private Instant issueDate;
     private Instant paidDate;
     private FineStatus status;
+    /** Breakdown for combined fines (null for single-cause fines). */
+    private Double lateAmount;
+    private Double damagedAmount;
 }

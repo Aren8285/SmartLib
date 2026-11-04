@@ -28,4 +28,13 @@ public class LoanScheduler {
             log.info("Scheduled overdue job: {} loan(s) marked overdue.", overdue);
         }
     }
+
+    /** One-shot reminders: pickup < 6h away, due date < 24h away. */
+    @Scheduled(fixedDelayString = "${app.scheduler.reminder-check-ms:300000}")
+    public void reminderCheck() {
+        int sent = loanService.runReminderJobs();
+        if (sent > 0) {
+            log.info("Scheduled reminder job: {} notification(s) sent.", sent);
+        }
+    }
 }

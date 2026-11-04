@@ -2,10 +2,12 @@ package com.smartlib;
 
 import com.smartlib.config.AppProperties;
 import com.smartlib.model.*;
+import com.smartlib.repository.BookRepository;
 import com.smartlib.repository.CopyRepository;
 import com.smartlib.repository.LoanRepository;
 import com.smartlib.repository.UserRepository;
 import com.smartlib.repository.WaitlistRepository;
+import com.smartlib.service.NotificationService;
 import com.smartlib.service.WaitlistService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -14,7 +16,6 @@ import java.time.Instant;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.*;
 
@@ -24,6 +25,8 @@ class WaitlistServiceTest {
     private LoanRepository loanRepository;
     private UserRepository userRepository;
     private CopyRepository copyRepository;
+    private BookRepository bookRepository;
+    private NotificationService notificationService;
     private WaitlistService waitlistService;
 
     private Copy copy;
@@ -34,8 +37,10 @@ class WaitlistServiceTest {
         loanRepository = mock(LoanRepository.class);
         userRepository = mock(UserRepository.class);
         copyRepository = mock(CopyRepository.class);
+        bookRepository = mock(BookRepository.class);
+        notificationService = mock(NotificationService.class);
         waitlistService = new WaitlistService(waitlistRepository, loanRepository, userRepository,
-                copyRepository, new AppProperties());
+                copyRepository, bookRepository, notificationService, new AppProperties());
 
         copy = Copy.builder().id("copy1").bookId("book1").status(CopyStatus.RESERVED).build();
     }
@@ -46,7 +51,7 @@ class WaitlistServiceTest {
     }
 
     @Test
-    void releaseCopy_promotesEarliestWaiter_copyStaysReserved() {
+    void releaseCopy_promotesEarliestWaiter_copyStaysReserved_andNotifies() {
         WaitlistEntry oldest = waitingEntry("entry1", "loan2", Instant.now().minusSeconds(600));
         when(waitlistRepository.findFirstByBookIdAndStatusOrderByJoinedAtAsc("book1", WaitlistStatus.WAITING))
                 .thenReturn(Optional.of(oldest));
@@ -62,11 +67,12 @@ class WaitlistServiceTest {
         assertThat(promoted.getStatus()).isEqualTo(LoanStatus.READY_FOR_PICKUP);
         assertThat(promoted.getCopyId()).isEqualTo("copy1");
         assertThat(promoted.getPickupDeadline()).isNotNull();
-        // FIFO: the oldest entry is fulfilled
         assertThat(oldest.getStatus()).isEqualTo(WaitlistStatus.FULFILLED);
-        // copy stays RESERVED for the promoted student (no AVAILABLE transition)
         assertThat(copy.getStatus()).isEqualTo(CopyStatus.RESERVED);
         verify(copyRepository, never()).save(any(Copy.class));
+        // promotion notifies the student with the deadline
+        verify(notificationService).create(eq("s-entry1"), eq(NotificationType.PROMOTED),
+                anyString(), anyString(), eq("loan2"));
     }
 
     @Test

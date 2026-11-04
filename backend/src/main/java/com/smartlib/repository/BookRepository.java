@@ -8,6 +8,8 @@ import java.util.List;
 
 public interface BookRepository extends MongoRepository<Book, String> {
 
+    Book findByIsbn(String isbn);
+
     @Query("{ '$or': [ " +
            "{ 'title': { '$regex': ?0, '$options': 'i' } }, " +
            "{ 'author': { '$regex': ?0, '$options': 'i' } }, " +

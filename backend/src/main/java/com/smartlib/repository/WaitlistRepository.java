@@ -21,4 +21,6 @@ public interface WaitlistRepository extends MongoRepository<WaitlistEntry, Strin
     boolean existsByStudentIdAndBookIdAndStatus(String studentId, String bookId, WaitlistStatus status);
 
     Optional<WaitlistEntry> findFirstByBookIdAndStatusOrderByJoinedAtAsc(String bookId, WaitlistStatus status);
+
+    List<WaitlistEntry> findByStudentIdAndStatus(String studentId, WaitlistStatus status);
 }
