@@ -1,17 +1,9 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { Bell } from 'lucide-react';
 import {
   getNotifications, unreadCount, markNotificationRead, markAllNotificationsRead,
 } from '../api';
-
-function timeAgo(iso) {
-  const diff = Date.now() - new Date(iso).getTime();
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return 'just now';
-  if (mins < 60) return `${mins}m ago`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
-  return `${Math.floor(hours / 24)}d ago`;
-}
+import { relativeTime } from '../utils/format';
 
 /** Bell with unread badge (polled every 30s) and a dropdown of recent notifications. */
 export default function NotificationBell() {
@@ -22,7 +14,7 @@ export default function NotificationBell() {
 
   const refresh = useCallback(() => {
     unreadCount().then((r) => setCount(r.count)).catch(() => {});
-    getNotifications().then((list) => setItems(list.slice(0, 15) || [])).catch(() => {});
+    getNotifications().then((list) => setItems((list || []).slice(0, 15))).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -32,8 +24,8 @@ export default function NotificationBell() {
   }, [refresh]);
 
   useEffect(() => {
-    const close = (e) => {
-      if (boxRef.current && !boxRef.current.contains(e.target)) setOpen(false);
+    const close = (event) => {
+      if (boxRef.current && !boxRef.current.contains(event.target)) setOpen(false);
     };
     document.addEventListener('mousedown', close);
     return () => document.removeEventListener('mousedown', close);
@@ -43,7 +35,7 @@ export default function NotificationBell() {
     try {
       await markAllNotificationsRead();
       refresh();
-    } catch { /* ignore */ }
+    } catch { /* the bell is non-critical */ }
   };
 
   const markOne = async (id) => {
@@ -54,33 +46,38 @@ export default function NotificationBell() {
   };
 
   return (
-    <div className="bell" ref={boxRef}>
+    <div className="notif" ref={boxRef}>
       <button
-        className="bell__button"
-        aria-label={`Notifications: ${count} unread`}
-        onClick={() => { setOpen(!open); if (!open) refresh(); }}
+        type="button"
+        className="icon-btn icon-wrap"
+        aria-label={`Notifications${count > 0 ? `: ${count} unread` : ''}`}
+        aria-expanded={open}
+        onClick={() => { setOpen((o) => !o); if (!open) refresh(); }}
       >
-        🔔
-        {count > 0 && <span className="bell__badge">{count}</span>}
+        <Bell size={18} />
+        {count > 0 && <span className="notif__badge" aria-hidden="true">{count > 9 ? '9+' : count}</span>}
       </button>
       {open && (
-        <div className="bell__dropdown">
-          <div className="bell__head">
+        <div className="notif__dropdown">
+          <div className="notif__head">
             <strong>Notifications</strong>
-            <button className="link-button" onClick={markAll}>Mark all read</button>
+            <button type="button" className="btn btn--ghost btn--sm" onClick={markAll}>Mark all read</button>
           </div>
-          {items.length === 0 && <div className="bell__empty">Nothing here yet.</div>}
-          <ul className="bell__list">
+          {items.length === 0 && <div className="notif__empty">Nothing here yet.</div>}
+          <ul className="notif__list">
             {items.map((n) => (
               <li
                 key={n.id}
-                className={`bell__item ${n.read ? '' : 'bell__item--unread'}`}
+                className={`notif__item ${n.read ? '' : 'notif__item--unread'}`}
                 onClick={() => !n.read && markOne(n.id)}
+                onKeyDown={(e) => { if (!n.read && e.key === 'Enter') markOne(n.id); }}
+                role={n.read ? undefined : 'button'}
+                tabIndex={n.read ? undefined : 0}
                 title={n.read ? '' : 'Click to mark read'}
               >
-                <div className="bell__title">{n.title}</div>
-                <div className="bell__message">{n.message}</div>
-                <div className="bell__time">{timeAgo(n.createdAt)}</div>
+                <div className="notif__title">{n.title}</div>
+                <div className="notif__message">{n.message}</div>
+                <div className="notif__time">{relativeTime(n.createdAt)}</div>
               </li>
             ))}
           </ul>

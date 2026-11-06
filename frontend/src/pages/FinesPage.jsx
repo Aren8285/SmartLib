@@ -1,79 +1,76 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { getFinesByStatus, payFine } from '../api';
-import Toast from '../components/Toast';
+import React, { useCallback, useEffect, useState } from 'react';
+import { Receipt, Wallet } from 'lucide-react';
+import { getFinesByStatus } from '../api';
+import { formatDateTime, money } from '../utils/format';
+import {
+  Alert, Button, EmptyState, PageHeader, SkeletonTable, StatCard, StatusBadge, Table, Tabs,
+} from '../components/ui';
 
-const fmtDate = (iso) => (iso ? new Date(iso).toLocaleString('en-IN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—');
+const TABS = [
+  { id: 'PENDING', label: 'Pending' },
+  { id: 'PAID', label: 'Paid' },
+  { id: 'ALL', label: 'All fines' },
+];
 
 export default function LibrarianFinesPage() {
   const [status, setStatus] = useState('PENDING');
   const [fines, setFines] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState('');
-  const [toast, setToast] = useState({ message: '', type: 'success' });
   const [error, setError] = useState('');
 
   const load = useCallback(() => {
     setLoading(true);
-    getFinesByStatus(status)
-      .then(setFines)
-      .catch((e) => setError(e.message))
-      .finally(() => setLoading(false));
+    setError('');
+    getFinesByStatus(status).then(setFines).catch((e) => setError(e.message)).finally(() => setLoading(false));
   }, [status]);
 
   useEffect(() => { load(); }, [load]);
 
-  const pay = async (f) => {
-    setBusy(f.id);
-    try {
-      await payFine(f.id);
-      setToast({ message: 'Payment recorded — the student moves to their reflection step.', type: 'success' });
-      load();
-    } catch (e) {
-      setToast({ message: e.message, type: 'error' });
-    } finally {
-      setBusy('');
-    }
-  };
+  const pending = fines.filter((f) => f.status === 'PENDING');
+  const collected = fines.filter((f) => f.status === 'PAID');
 
   return (
     <div className="page">
-      <h1>Fines</h1>
-      <Toast message={toast.message} type={toast.type} onClose={() => setToast({ message: '', type: 'success' })} />
-      {error && <div className="banner banner--warning">{error}</div>}
+      <PageHeader
+        eyebrow="Librarian"
+        title="Fines"
+        subtitle="Fines are imposed automatically at return. Students pay from their account; payments move the loan to reflection."
+      />
 
-      <div className="tabs">
-        {['PENDING', 'PAID', 'ALL'].map((s) => (
-          <button key={s} className={`tab ${status === s ? 'tab--on' : ''}`} onClick={() => setStatus(s)}>{s}</button>
-        ))}
-      </div>
+      <Tabs tabs={TABS} active={status} onChange={setStatus} ariaLabel="Fine status" />
 
-      {loading ? <div className="loading">Loading…</div> : fines.length === 0
-        ? <p className="empty-state">No fines in this view.</p> : (
-        <table className="table">
-          <thead>
-            <tr><th>Student</th><th>Reason</th><th>Amount</th><th>Breakdown</th><th>Status</th><th>Imposed</th><th></th></tr>
-          </thead>
+      {error && <Alert tone="error" title="Could not load fines" action={<Button size="sm" variant="secondary" onClick={load}>Retry</Button>}>{error}</Alert>}
+
+      {!loading && (
+        <div className="stats-grid">
+          <StatCard label="Pending" value={money(pending.reduce((s, f) => s + f.amount, 0))} icon={Wallet} tone={pending.length ? 'danger' : 'success'} hint={`${pending.length} fine${pending.length === 1 ? '' : 's'}`} />
+          <StatCard label="Collected" value={money(collected.reduce((s, f) => s + f.amount, 0))} icon={Receipt} tone="success" hint={`${collected.length} paid`} />
+          <StatCard label="Total records" value={fines.length} hint="In this view" />
+        </div>
+      )}
+
+      {loading ? <SkeletonTable rows={5} columns={6} /> : fines.length === 0 ? (
+        <EmptyState icon={Receipt} title="No fines in this view" description={status === 'PENDING' ? 'No student owes a fine right now.' : 'Settled fines appear here.'} />
+      ) : (
+        <Table>
+          <thead><tr><th>Student</th><th>Reason</th><th>Amount</th><th>Breakdown</th><th>Status</th><th>Imposed</th><th>Paid</th></tr></thead>
           <tbody>
-            {fines.map((f) => (
-              <tr key={f.id}>
-                <td>{f.studentName}</td>
-                <td>{f.reason.replace(/_/g, ' ')}</td>
-                <td className={f.status === 'PENDING' ? 'text-red' : ''}>₹{f.amount}</td>
-                <td>{f.lateAmount != null && f.damagedAmount != null ? `late ₹${f.lateAmount} + damaged ₹${f.damagedAmount}` : '—'}</td>
-                <td><span className={`badge ${f.status === 'PENDING' ? 'badge--red' : 'badge--green'}`}>{f.status}</span></td>
-                <td>{fmtDate(f.imposedDate)}</td>
-                <td>
-                  {f.status === 'PENDING' && (
-                    <button className="btn btn--primary" disabled={busy === f.id} onClick={() => pay(f)}>
-                      {busy === f.id ? 'Paying…' : 'Record payment'}
-                    </button>
-                  )}
-                </td>
+            {fines.map((fine) => (
+              <tr key={fine.id}>
+                <td><strong>{fine.studentName}</strong></td>
+                <td>{fine.reason.replace(/_/g, ' ').toLowerCase()}</td>
+                <td className={fine.status === 'PENDING' ? 'text-danger' : ''}>{money(fine.amount)}</td>
+                <td>{fine.lateAmount != null && fine.damagedAmount != null ? `late ${money(fine.lateAmount)} + damaged ${money(fine.damagedAmount)}` : '—'}</td>
+                <td><StatusBadge status={fine.status} /></td>
+                <td>{formatDateTime(fine.issueDate)}</td>
+                <td>{formatDateTime(fine.paidDate)}</td>
               </tr>
             ))}
           </tbody>
-        </table>
+        </Table>
       )}
+
+      <p className="cell-detail">Payments are simulated in this demo. Students tap “Pay fine” in My fines; librarians keep the audit view here.</p>
     </div>
   );
 }

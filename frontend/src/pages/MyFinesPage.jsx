@@ -1,83 +1,110 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { Receipt, Wallet } from 'lucide-react';
 import { getMyFines, payFine } from '../api';
-import Toast from '../components/Toast';
-
-function fmtDate(iso) {
-  return iso ? new Date(iso).toLocaleString('en-IN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
-}
+import { useToast } from '../context/ToastContext';
+import { formatDateTime, money } from '../utils/format';
+import {
+  Alert, Button, ConfirmDialog, EmptyState, PageHeader, SkeletonTable, StatCard, StatusBadge, Table,
+} from '../components/ui';
 
 export default function MyFinesPage() {
+  const toast = useToast();
   const [fines, setFines] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState('');
-  const [toast, setToast] = useState({ message: '', type: 'success' });
   const [error, setError] = useState('');
+  const [confirm, setConfirm] = useState(null);
+  const [busy, setBusy] = useState(false);
 
   const load = useCallback(() => {
     setLoading(true);
-    getMyFines()
-      .then(setFines)
-      .catch((e) => setError(e.message))
-      .finally(() => setLoading(false));
+    setError('');
+    getMyFines().then(setFines).catch((e) => setError(e.message)).finally(() => setLoading(false));
   }, []);
 
   useEffect(() => { load(); }, [load]);
 
-  const pay = async (f) => {
-    setBusy(f.id);
+  const pending = fines.filter((f) => f.status === 'PENDING');
+  const paid = fines.filter((f) => f.status === 'PAID');
+  const pendingTotal = pending.reduce((sum, f) => sum + f.amount, 0);
+
+  const doPay = async () => {
+    setBusy(true);
     try {
-      const res = await payFine(f.id);
-      setToast({ message: res.message || 'Fine paid.', type: 'success' });
+      await payFine(confirm.id);
+      toast.success('Payment recorded. You can continue with your reflection.');
+      setConfirm(null);
       load();
     } catch (e) {
-      setToast({ message: e.message, type: 'error' });
+      toast.error(e.message);
     } finally {
-      setBusy('');
+      setBusy(false);
     }
   };
 
-  if (error) return <div className="banner banner--warning">{error}</div>;
-
   return (
     <div className="page">
-      <h1>My fines</h1>
-      <Toast message={toast.message} type={toast.type} onClose={() => setToast({ message: '', type: 'success' })} />
-      {loading ? <div className="loading">Loading…</div> : (
-        fines.length === 0 ? <p className="empty-state">No fines — keep it up! ⭐</p> : (
-          <table className="table">
-            <thead>
-              <tr><th>Reason</th><th>Amount</th><th>Breakdown</th><th>Status</th><th>Imposed</th><th>Paid</th><th></th></tr>
-            </thead>
-            <tbody>
-              {fines.map((f) => (
-                <tr key={f.id}>
-                  <td>{f.reason.replace(/_/g, ' ')}</td>
-                  <td className={f.status === 'PENDING' ? 'text-red' : ''}>₹{f.amount}</td>
-                  <td>
-                    {f.lateAmount != null && f.damagedAmount != null
-                      ? `late ₹${f.lateAmount} + damaged ₹${f.damagedAmount}`
-                      : '—'}
-                  </td>
-                  <td>
-                    <span className={`badge ${f.status === 'PENDING' ? 'badge--red' : 'badge--green'}`}>
-                      {f.status}
-                    </span>
-                  </td>
-                  <td>{fmtDate(f.imposedDate)}</td>
-                  <td>{fmtDate(f.paidDate)}</td>
-                  <td>
-                    {f.status === 'PENDING' && (
-                      <button className="btn btn--primary" disabled={busy === f.id} onClick={() => pay(f)}>
-                        {busy === f.id ? 'Paying…' : 'Pay'}
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )
+      <PageHeader
+        eyebrow="Account"
+        title="My fines"
+        subtitle="Fines are calculated at return time. Paying one unlocks the reflection step for that loan."
+      />
+
+      {error && <Alert tone="error" title="Could not load your fines" action={<Button size="sm" variant="secondary" onClick={load}>Retry</Button>}>{error}</Alert>}
+
+      {!loading && (
+        <div className="stats-grid">
+          <StatCard label="Outstanding" value={money(pendingTotal)} icon={Wallet} tone={pendingTotal > 0 ? 'danger' : 'success'} hint={`${pending.length} unpaid fine${pending.length === 1 ? '' : 's'}`} />
+          <StatCard label="Paid to date" value={money(paid.reduce((s, f) => s + f.amount, 0))} icon={Receipt} tone="success" hint={`${paid.length} settled`} />
+        </div>
       )}
+
+      {loading ? <SkeletonTable rows={4} columns={6} /> : fines.length === 0 ? (
+        <EmptyState
+          icon={Receipt}
+          title="No fines — keep it up"
+          description="Return books on time and in good condition to keep your record clean."
+          action={<Link to="/my-loans" className="btn btn--primary btn--sm">View my loans</Link>}
+        />
+      ) : (
+        <Table>
+          <thead>
+            <tr><th>Reason</th><th>Amount</th><th>Breakdown</th><th>Status</th><th>Imposed</th><th>Paid</th><th><span className="sr-only">Actions</span></th></tr>
+          </thead>
+          <tbody>
+            {fines.map((fine) => (
+              <tr key={fine.id}>
+                <td><strong>{fine.reason.replace(/_/g, ' ').toLowerCase()}</strong></td>
+                <td className={fine.status === 'PENDING' ? 'text-danger' : ''}>{money(fine.amount)}</td>
+                <td>
+                  {fine.lateAmount != null && fine.damagedAmount != null
+                    ? `late ${money(fine.lateAmount)} + damaged ${money(fine.damagedAmount)}`
+                    : '—'}
+                </td>
+                <td><StatusBadge status={fine.status} /></td>
+                <td>{formatDateTime(fine.issueDate || fine.imposedDate)}</td>
+                <td>{formatDateTime(fine.paidDate)}</td>
+                <td>
+                  {fine.status === 'PENDING' && (
+                    <Button size="sm" onClick={() => setConfirm(fine)}>Pay fine</Button>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </Table>
+      )}
+
+      <ConfirmDialog
+        open={Boolean(confirm)}
+        onClose={() => setConfirm(null)}
+        onConfirm={doPay}
+        loading={busy}
+        title="Pay this fine?"
+        message={confirm ? `${money(confirm.amount)} for ${confirm.reason.replace(/_/g, ' ').toLowerCase()}. This is a simulated payment for the demo.` : ''}
+        confirmLabel="Pay now"
+        variant="primary"
+      />
     </div>
   );
 }

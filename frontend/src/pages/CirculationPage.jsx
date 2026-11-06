@@ -1,41 +1,55 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { getLoansByStatus, issueLoan, returnLoan, lostLoan } from '../api';
-import Toast from '../components/Toast';
+import React, { useCallback, useEffect, useState } from 'react';
+import { ClipboardList, RotateCcw } from 'lucide-react';
+import { getLoans, issueLoan, lostLoan, returnLoan } from '../api';
+import { useToast } from '../context/ToastContext';
+import { formatDateTime, money } from '../utils/format';
+import {
+  Alert, Button, Card, ConfirmDialog, EmptyState, Modal, PageHeader, Pagination,
+  Select, SkeletonTable, StatusBadge, Table,
+} from '../components/ui';
 import Countdown from '../components/Countdown';
 import DevTools from '../components/DevTools';
 
-const fmtDT = (iso) => (iso ? new Date(iso).toLocaleString('en-IN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—');
+const SIZE = 8;
 
 export default function CirculationPage() {
-  const [ready, setReady] = useState([]);
-  const [issued, setIssued] = useState([]);
+  const toast = useToast();
+  const [ready, setReady] = useState({ items: [], totalItems: 0, totalPages: 1 });
+  const [active, setActive] = useState({ items: [], totalItems: 0, totalPages: 1 });
+  const [readyPage, setReadyPage] = useState(0);
+  const [activePage, setActivePage] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState('');
-  const [toast, setToast] = useState({ message: '', type: 'success' });
-  const [returning, setReturning] = useState(null); // loan being returned
-  const [condition, setCondition] = useState('GOOD');
   const [error, setError] = useState('');
+  const [busy, setBusy] = useState('');
+  const [returning, setReturning] = useState(null);
+  const [condition, setCondition] = useState('GOOD');
+  const [lost, setLost] = useState(null);
 
   const load = useCallback(() => {
     setLoading(true);
-    Promise.all([getLoansByStatus('READY_FOR_PICKUP'), getLoansByStatus('ISSUED'), getLoansByStatus('OVERDUE')])
-      .then(([r, i, o]) => { setReady(r); setIssued([...i, ...o]); })
+    setError('');
+    Promise.all([
+      getLoans({ status: 'READY_FOR_PICKUP', page: readyPage, size: SIZE }),
+      getLoans({ status: 'ISSUED,OVERDUE', page: activePage, size: SIZE }),
+    ])
+      .then(([readyEnvelope, activeEnvelope]) => {
+        setReady(readyEnvelope);
+        setActive(activeEnvelope);
+      })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
-  }, []);
+  }, [readyPage, activePage]);
 
   useEffect(() => { load(); }, [load]);
 
-  const notify = (payload) => setToast(payload);
-
-  const doIssue = async (loanId) => {
-    setBusy(loanId);
+  const doIssue = async (loan) => {
+    setBusy(loan.id);
     try {
-      const res = await issueLoan(loanId);
-      notify({ message: res.message || 'Issued.', type: 'success' });
+      const res = await issueLoan(loan.id);
+      toast.success(res.message || 'Book issued.');
       load();
     } catch (e) {
-      notify({ message: e.message, type: 'error' });
+      toast.error(e.message);
     } finally {
       setBusy('');
     }
@@ -45,124 +59,136 @@ export default function CirculationPage() {
     setBusy(returning.id);
     try {
       const res = await returnLoan(returning.id, condition === 'GOOD' ? null : condition);
-      notify({ message: res.message || 'Returned.', type: 'success' });
+      toast.success(res.message || 'Book returned.');
       setReturning(null);
       load();
     } catch (e) {
-      notify({ message: e.message, type: 'error' });
+      toast.error(e.message);
     } finally {
       setBusy('');
     }
   };
 
-  const doLost = async (loanId) => {
-    if (!window.confirm('Record this book as LOST? A replacement fine is imposed.')) return;
-    setBusy(loanId);
+  const doLost = async () => {
+    setBusy(lost.id);
     try {
-      const res = await lostLoan(loanId);
-      notify({ message: res.message || 'Marked lost.', type: 'success' });
+      const res = await lostLoan(lost.id);
+      toast.info(res.message || 'Copy marked lost.');
+      setLost(null);
       load();
     } catch (e) {
-      notify({ message: e.message, type: 'error' });
+      toast.error(e.message);
     } finally {
       setBusy('');
     }
   };
 
-  const setDue = async (loanId, days) => {
-    try {
-      const { devSetDueDate } = await import('../api');
-      await devSetDueDate(loanId, days);
-      notify({ message: `Due date moved by ${days} day(s) — run jobs to refresh overdue status.`, type: 'info' });
-      load();
-    } catch (e) {
-      notify({ message: e.message, type: 'error' });
-    }
-  };
+  const devLoans = [...(ready.items || []), ...(active.items || [])];
 
   return (
     <div className="page">
-      <h1>Circulation</h1>
-      <Toast message={toast.message} type={toast.type} onClose={() => setToast({ message: '', type: 'success' })} />
-      {error && <div className="banner banner--warning">{error}</div>}
+      <PageHeader
+        eyebrow="Librarian"
+        title="Circulation"
+        subtitle="Issue reserved copies, process returns and record damaged or lost items."
+        actions={<Button variant="secondary" icon={RotateCcw} onClick={load}>Refresh</Button>}
+      />
 
-      <section className="section">
-        <h2>Ready for pickup ({ready.length})</h2>
-        {loading ? <div className="loading">Loading…</div> : ready.length === 0
-          ? <p className="empty-state">No copies waiting for pickup.</p> : (
-          <table className="table">
-            <thead><tr><th>Student</th><th>Book</th><th>Copy</th><th>Pickup deadline</th><th></th></tr></thead>
-            <tbody>
-              {ready.map((l) => (
-                <tr key={l.id}>
-                  <td>{l.studentName}</td>
-                  <td>{l.bookTitle}</td>
-                  <td>{l.copyId?.slice(-6).toUpperCase()}</td>
-                  <td><Countdown deadline={l.pickupDeadline} /> ({fmtDT(l.pickupDeadline)})</td>
-                  <td>
-                    <button className="btn btn--success" disabled={busy === l.id} onClick={() => doIssue(l.id)}>
-                      {busy === l.id ? '…' : 'Issue'}
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+      {error && <Alert tone="error" title="Could not load circulation" action={<Button size="sm" variant="secondary" onClick={load}>Retry</Button>}>{error}</Alert>}
+
+      <Card
+        title={`Ready for pickup (${ready.totalItems ?? (ready.items || []).length})`}
+        subtitle="Reserved copies waiting at the desk; the countdown turns red under 6 hours."
+      >
+        {loading ? <SkeletonTable rows={3} columns={5} /> : (ready.items || []).length === 0 ? (
+          <EmptyState icon={ClipboardList} title="No copies waiting for pickup" description="Reservations appear here as soon as a copy is held for a student." />
+        ) : (
+          <>
+            <Table>
+              <thead><tr><th>Student</th><th>Book</th><th>Copy</th><th>Pickup deadline</th><th><span className="sr-only">Actions</span></th></tr></thead>
+              <tbody>
+                {(ready.items || []).map((loan) => (
+                  <tr key={loan.id}>
+                    <td><strong>{loan.studentName}</strong></td>
+                    <td>{loan.bookTitle}</td>
+                    <td className="mono">{loan.copyId ? loan.copyId.slice(-6).toUpperCase() : '—'}</td>
+                    <td><Countdown deadline={loan.pickupDeadline} /> <span className="cell-detail" title={formatDateTime(loan.pickupDeadline)}>{formatDateTime(loan.pickupDeadline)}</span></td>
+                    <td><Button size="sm" variant="success" loading={busy === loan.id} onClick={() => doIssue(loan)}>Issue</Button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </Table>
+            <Pagination page={ready.page || 0} totalPages={ready.totalPages || 1} totalItems={ready.totalItems} size={ready.size || SIZE} onChange={setReadyPage} />
+          </>
         )}
-      </section>
+      </Card>
 
-      <section className="section">
-        <h2>Issued &amp; overdue ({issued.length})</h2>
-        {!loading && issued.length === 0 && <p className="empty-state">No books are out right now.</p>}
-        {!loading && issued.length > 0 && (
-          <table className="table">
-            <thead><tr><th>Student</th><th>Book</th><th>Status</th><th>Due</th><th>Fine</th><th></th></tr></thead>
-            <tbody>
-              {issued.map((l) => (
-                <tr key={l.id}>
-                  <td>{l.studentName}</td>
-                  <td>{l.bookTitle}</td>
-                  <td><span className={`badge ${l.status === 'OVERDUE' ? 'badge--red' : 'badge--green'}`}>{l.status}</span></td>
-                  <td>{fmtDT(l.dueDate)}</td>
-                  <td>{l.accruedFine ? <span className="text-red">₹{l.accruedFine}</span> : '—'}</td>
-                  <td className="row-actions">
-                    <button className="btn btn--primary" disabled={busy === l.id} onClick={() => { setReturning(l); setCondition('GOOD'); }}>
-                      Return
-                    </button>
-                    <button className="btn btn--danger" disabled={busy === l.id} onClick={() => doLost(l.id)}>
-                      Mark lost
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+      <Card
+        title={`Issued & overdue (${active.totalItems ?? (active.items || []).length})`}
+        subtitle="Returns release the copy to the next student in the queue."
+      >
+        {loading ? <SkeletonTable rows={4} columns={6} /> : (active.items || []).length === 0 ? (
+          <EmptyState icon={ClipboardList} title="No books are out right now" />
+        ) : (
+          <>
+            <Table>
+              <thead><tr><th>Student</th><th>Book</th><th>Status</th><th>Due</th><th>Fine</th><th><span className="sr-only">Actions</span></th></tr></thead>
+              <tbody>
+                {(active.items || []).map((loan) => (
+                  <tr key={loan.id}>
+                    <td><strong>{loan.studentName}</strong></td>
+                    <td>{loan.bookTitle}</td>
+                    <td><StatusBadge status={loan.status} /></td>
+                    <td>{formatDateTime(loan.dueDate)}</td>
+                    <td>{loan.accruedFine ? <span className="text-danger">{money(loan.accruedFine)}</span> : '—'}</td>
+                    <td>
+                      <div className="row-actions">
+                        <Button size="sm" variant="primary" disabled={busy === loan.id} onClick={() => { setReturning(loan); setCondition('GOOD'); }}>Return</Button>
+                        <Button size="sm" variant="ghost" disabled={busy === loan.id} onClick={() => setLost(loan)}>Lost</Button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </Table>
+            <Pagination page={active.page || 0} totalPages={active.totalPages || 1} totalItems={active.totalItems} size={active.size || SIZE} onChange={setActivePage} />
+          </>
         )}
-      </section>
+      </Card>
 
-      {returning && (
-        <div className="modal-backdrop" onClick={() => setReturning(null)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h3>Return “{returning.bookTitle}”</h3>
-            <p className="page-subtitle">{returning.studentName} · due {fmtDT(returning.dueDate)}</p>
-            <label className="field">
-              <span>Condition of the returned copy</span>
-              <select value={condition} onChange={(e) => setCondition(e.target.value)}>
-                <option value="GOOD">GOOD — fine book</option>
-                <option value="DAMAGED">DAMAGED — damaged-book fine applies</option>
-              </select>
-            </label>
-            <div className="modal__actions">
-              <button className="btn" onClick={() => setReturning(null)}>Cancel</button>
-              <button className="btn btn--primary" disabled={busy === returning.id} onClick={doReturn}>
-                {busy === returning.id ? 'Processing…' : 'Confirm return'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <DevTools loans={devLoans} onRefresh={load} notify={toast} />
 
-      <DevTools onRefresh={load} notify={notify} loans={[...ready, ...issued]} />
+      <Modal
+        open={Boolean(returning)}
+        onClose={() => setReturning(null)}
+        title={`Return “${returning?.bookTitle || ''}”`}
+        description={returning ? `${returning.studentName} · due ${formatDateTime(returning.dueDate)}` : ''}
+        footer={(
+          <>
+            <Button variant="ghost" onClick={() => setReturning(null)} disabled={busy === returning?.id}>Cancel</Button>
+            <Button onClick={doReturn} loading={busy === returning?.id}>Confirm return</Button>
+          </>
+        )}
+      >
+        <Select label="Condition of the returned copy" value={condition} onChange={(e) => setCondition(e.target.value)}>
+          <option value="GOOD">Good — normal return</option>
+          <option value="DAMAGED">Damaged — damaged-book fine applies</option>
+        </Select>
+        <p className="cell-detail">
+          A late return creates a fine for the overdue days. A damaged copy is removed from circulation and the
+          student is charged the damaged-book fine plus any late amount.
+        </p>
+      </Modal>
+
+      <ConfirmDialog
+        open={Boolean(lost)}
+        onClose={() => setLost(null)}
+        onConfirm={doLost}
+        loading={busy === lost?.id}
+        title="Mark this copy as lost?"
+        message={lost ? `“${lost.bookTitle}” held by ${lost.studentName} will be marked LOST. A replacement fine is imposed and the copy is not returned to the shelf.` : ''}
+        confirmLabel="Mark lost"
+      />
     </div>
   );
 }

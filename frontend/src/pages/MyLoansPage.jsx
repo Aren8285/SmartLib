@@ -1,214 +1,242 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { getMyLoans, myReflections, cancelLoan, skipReflection, submitReflection } from '../api';
-import { useAuth } from '../context/AuthContext';
-import Toast from '../components/Toast';
+import React, { useCallback, useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { BookMarked } from 'lucide-react';
+import {
+  cancelLoan, getMyLoans, myReflections, skipReflection, submitReflection,
+} from '../api';
+import { useToast } from '../context/ToastContext';
+import { formatDate, formatDateTime, relativeTime } from '../utils/format';
+import {
+  Alert, Button, ConfirmDialog, EmptyState, PageHeader, Pagination, SkeletonTable,
+  StatusBadge, Table, Tabs, Textarea, Tooltip,
+} from '../components/ui';
 import Countdown from '../components/Countdown';
-
-function fmtDate(iso) {
-  return iso ? new Date(iso).toLocaleDateString('en-IN', { month: 'short', day: 'numeric' }) : '—';
-}
-function fmtDT(iso) {
-  return iso ? new Date(iso).toLocaleString('en-IN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
-}
 
 const TABS = [
   { id: 'active', label: 'Active' },
   { id: 'waitlisted', label: 'Waitlisted' },
-  { id: 'reflection', label: 'Awaiting reflection' },
+  { id: 'reflection', label: 'Reflection' },
   { id: 'history', label: 'History' },
 ];
 
-function badgeClass(status) {
-  switch (status) {
-    case 'READY_FOR_PICKUP': return 'badge--blue';
-    case 'ISSUED': return 'badge--green';
-    case 'OVERDUE': return 'badge--red';
-    case 'FINE_PENDING': return 'badge--orange';
-    case 'REFLECTION_PENDING': return 'badge--yellow';
-    case 'EXPIRED': case 'CANCELLED': case 'LOST': return 'badge--gray';
-    case 'CLOSED': return 'badge--gray';
-    default: return 'badge--gray';
-  }
-}
+const STATUS_BY_TAB = {
+  active: 'READY_FOR_PICKUP,ISSUED,OVERDUE,FINE_PENDING',
+  waitlisted: 'WAITLISTED',
+  reflection: 'REFLECTION_PENDING',
+  history: 'CLOSED,RETURNED,EXPIRED,CANCELLED,LOST',
+};
 
-function ReflectionBox({ loan, onDone, toast }) {
+function ReflectionForm({ loan, onDone, onCancel, busy, setBusy, toast }) {
   const MIN = 50;
   const [text, setText] = useState('');
-  const [busy, setBusy] = useState(false);
+  const length = text.trim().length;
 
   const submit = async () => {
-    setBusy(true);
+    setBusy('reflection');
     try {
       await submitReflection(loan.id, text);
-      toast({ message: 'Reflection submitted — your librarian will review it shortly.', type: 'success' });
+      toast.success('Reflection submitted — your librarian will review it shortly.');
       onDone();
     } catch (e) {
-      toast({ message: e.message, type: 'error' });
+      toast.error(e.message);
     } finally {
-      setBusy(false);
+      setBusy('');
     }
   };
 
   const skip = async () => {
-    if (!window.confirm('Skip the reflection? The loan closes without reflection points.')) return;
-    setBusy(true);
+    setBusy('skip');
     try {
       const res = await skipReflection(loan.id);
-      toast({ message: res.message || 'Reflection skipped.', type: 'success' });
+      toast.info(res.message || 'Reflection skipped.');
       onDone();
     } catch (e) {
-      toast({ message: e.message, type: 'error' });
+      toast.error(e.message);
     } finally {
-      setBusy(false);
+      setBusy('');
     }
   };
 
   return (
-    <div className="reflection-box">
-      <textarea
+    <div style={{ padding: '14px 4px' }}>
+      <Textarea
+        label={`What did you take away from “${loan.bookTitle}”?`}
         rows={4}
         value={text}
-        placeholder={`What did you take away from "${loan.bookTitle}"? (${MIN} characters minimum)`}
+        maxLength={2000}
+        placeholder="Share the idea, chapter or argument that stayed with you…"
+        hint={`${length} / ${MIN} characters minimum · ${2000 - length} left`}
         onChange={(e) => setText(e.target.value)}
       />
-      <div className="reflection-box__meta">
-        <span className={text.trim().length >= MIN ? '' : 'text-red'}>
-          {text.trim().length} / {MIN} characters
-        </span>
-        <div className="reflection-box__actions">
-          <button className="btn" disabled={busy} onClick={skip}>Skip</button>
-          <button className="btn btn--primary" disabled={busy || text.trim().length < MIN} onClick={submit}>
-            {busy ? 'Submitting…' : 'Submit reflection'}
-          </button>
-        </div>
+      <div className="row" style={{ justifyContent: 'flex-end' }}>
+        <Button variant="ghost" onClick={onCancel} disabled={Boolean(busy)}>Close</Button>
+        <Button variant="secondary" onClick={skip} loading={busy === 'skip'} disabled={Boolean(busy)}>Skip reflection</Button>
+        <Button onClick={submit} loading={busy === 'reflection'} disabled={length < MIN || Boolean(busy)}>Submit reflection</Button>
       </div>
     </div>
   );
 }
 
 export default function MyLoansPage() {
-  const { user } = useAuth();
+  const toast = useToast();
   const [tab, setTab] = useState('active');
-  const [loans, setLoans] = useState([]);
-  const [reflByLoan, setReflByLoan] = useState({});
+  const [page, setPage] = useState(0);
+  const [data, setData] = useState({ items: [], totalItems: 0, totalPages: 1 });
+  const [reflections, setReflections] = useState({});
   const [loading, setLoading] = useState(true);
-  const [openReflection, setOpenReflection] = useState(null);
-  const [toast, setToast] = useState({ message: '', type: 'success' });
   const [error, setError] = useState('');
+  const [openReflection, setOpenReflection] = useState(null);
+  const [busy, setBusy] = useState('');
+  const [confirm, setConfirm] = useState(null);
+  const size = 8;
 
   const load = useCallback(() => {
     setLoading(true);
-    Promise.all([getMyLoans(), myReflections()])
-      .then(([ls, rs]) => {
-        setLoans(ls);
-        setReflByLoan(Object.fromEntries((rs || []).map((r) => [r.loanId, r])));
+    setError('');
+    Promise.all([
+      getMyLoans({ page, size, status: STATUS_BY_TAB[tab] }),
+      tab === 'history' || tab === 'reflection' ? myReflections() : Promise.resolve([]),
+    ])
+      .then(([envelope, reflectionList]) => {
+        setData(envelope?.items ? envelope : { items: envelope || [], totalItems: 0, totalPages: 1 });
+        setReflections(Object.fromEntries((reflectionList || []).map((r) => [r.loanId, r])));
       })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
-  }, []);
+  }, [page, tab]);
 
   useEffect(() => { load(); }, [load]);
 
-  const notify = (payload) => setToast(payload);
-  const finish = () => { setOpenReflection(null); load(); };
+  const switchTab = (next) => { setTab(next); setPage(0); setOpenReflection(null); };
 
-  const cancel = async (loanId) => {
+  const doCancel = async () => {
+    setBusy('cancel');
     try {
-      const res = await cancelLoan(loanId);
-      notify({ message: res.message || 'Cancelled.', type: 'success' });
+      const res = await cancelLoan(confirm.id);
+      toast.success(res.message || 'Request cancelled.');
+      setConfirm(null);
       load();
     } catch (e) {
-      notify({ message: e.message, type: 'error' });
+      toast.error(e.message);
+    } finally {
+      setBusy('');
     }
   };
 
-  const CANCELABLE = ['WAITLISTED', 'READY_FOR_PICKUP'];
-  const active = loans.filter((l) => ['READY_FOR_PICKUP', 'ISSUED', 'OVERDUE', 'FINE_PENDING'].includes(l.status));
-  const waitlisted = loans.filter((l) => l.status === 'WAITLISTED');
-  const reflectionPending = loans.filter((l) => l.status === 'REFLECTION_PENDING');
-  const history = loans.filter((l) => ['CLOSED', 'RETURNED', 'EXPIRED', 'CANCELLED', 'LOST'].includes(l.status));
-  const shown = { active, waitlisted, reflection: reflectionPending, history }[tab];
+  const loans = data.items || [];
 
   return (
     <div className="page">
-      <h1>My loans</h1>
-      <Toast message={toast.message} type={toast.type} onClose={() => setToast({ message: '', type: 'success' })} />
-      {error && <div className="banner banner--warning">{error}</div>}
+      <PageHeader
+        eyebrow="Borrowing"
+        title="My loans"
+        subtitle="Track requests, due dates, pickup deadlines and reflections."
+        actions={<Link to="/books" className="btn btn--primary">Find another book</Link>}
+      />
 
-      <div className="tabs">
-        {TABS.map((t) => (
-          <button key={t.id} className={`tab ${tab === t.id ? 'tab--on' : ''}`} onClick={() => setTab(t.id)}>
-            {t.label} ({{
-              active: active.length, waitlisted: waitlisted.length,
-              reflection: reflectionPending.length, history: history.length,
-            }[t.id]})
-          </button>
-        ))}
-      </div>
+      <Tabs tabs={TABS} active={tab} onChange={switchTab} ariaLabel="Loan lists" />
 
-      {loading ? <div className="loading">Loading…</div> : (
-        shown.length === 0 ? <p className="empty-state">Nothing here yet.</p> : (
-          <table className="table">
+      {error && (
+        <Alert tone="error" title="Could not load your loans" action={<Button variant="secondary" size="sm" onClick={load}>Retry</Button>}>
+          {error}
+        </Alert>
+      )}
+
+      {loading ? <SkeletonTable rows={5} columns={6} /> : loans.length === 0 ? (
+        <EmptyState
+          icon={BookMarked}
+          title={tab === 'history' ? 'No past loans yet' : 'Nothing in this list'}
+          description={tab === 'history' ? 'Closed and cancelled loans will appear here.' : 'When you reserve a book it will appear in the matching tab.'}
+          action={tab === 'active' ? <Link to="/books" className="btn btn--primary btn--sm">Browse the catalogue</Link> : null}
+        />
+      ) : (
+        <>
+          <Table>
             <thead>
-              <tr>
-                <th>Book</th><th>Status</th><th>Requested</th><th>Due</th><th>Notable</th><th></th>
-              </tr>
+              <tr><th>Book</th><th>Status</th><th>Requested</th><th>Due / deadline</th><th>Details</th><th><span className="sr-only">Actions</span></th></tr>
             </thead>
             <tbody>
-              {shown.map((l) => {
-                const refl = reflByLoan[l.id];
+              {loans.map((loan) => {
+                const reflection = reflections[loan.id];
+                const cancelable = ['WAITLISTED', 'READY_FOR_PICKUP'].includes(loan.status);
                 return (
-                  <React.Fragment key={l.id}>
+                  <React.Fragment key={loan.id}>
                     <tr>
-                      <td>{l.bookTitle}</td>
-                      <td><span className={`badge ${badgeClass(l.status)}`}>{l.status.replace(/_/g, ' ')}</span></td>
-                      <td>{fmtDT(l.requestDate)}</td>
-                      <td>{fmtDate(l.dueDate)}</td>
+                      <td><strong>{loan.bookTitle}</strong></td>
+                      <td><StatusBadge status={loan.status} /></td>
+                      <td>{formatDate(loan.requestDate)}</td>
                       <td>
-                        {l.status === 'READY_FOR_PICKUP' && <>Pick up before <Countdown deadline={l.pickupDeadline} /></>}
-                        {l.status === 'OVERDUE' && l.accruedFine != null && <span className="text-red">₹{l.accruedFine} accrued</span>}
-                        {l.status === 'FINE_PENDING' && l.fine && (
-                          <>fine ₹{l.fine.amount} ({l.fine.reason === 'DAMAGED_BOOK'
-                            ? `damaged ₹${l.fine.damagedAmount} + late ₹${l.fine.lateAmount}`
-                            : l.fine.reason.replace(/_/g, ' ')}){!l.fine.paidDate && ' — unpaid'}</>
+                        {loan.dueDate && <Tooltip text={formatDateTime(loan.dueDate)}>{relativeTime(loan.dueDate)}</Tooltip>}
+                        {!loan.dueDate && loan.pickupDeadline && (
+                          <span>Pick up <Countdown deadline={loan.pickupDeadline} /></span>
                         )}
-                        {l.status === 'WAITLISTED' && l.queuePosition != null && <>position #{l.queuePosition}</>}
-                        {tab === 'history' && reflByLoan[l.id] && (
-                          <span className={`badge ${reflByLoan[l.id].status === 'APPROVED' ? 'badge--green' : reflByLoan[l.id].status === 'REJECTED' ? 'badge--red' : 'badge--yellow'}`}>
-                            reflection {reflByLoan[l.id].status.toLowerCase()}
-                            {reflByLoan[l.id].status === 'REJECTED' ? ` — "${reflByLoan[l.id].reviewNote}"` : ''}
-                          </span>
-                        )}
+                        {!loan.dueDate && !loan.pickupDeadline && '—'}
                       </td>
                       <td>
-                        {CANCELABLE.includes(l.status) && (
-                          <button className="btn btn--danger" onClick={() => cancel(l.id)}>Cancel</button>
+                        {loan.status === 'OVERDUE' && loan.accruedFine != null && (
+                          <span className="text-danger">₹{loan.accruedFine} accrued</span>
                         )}
-                        {l.status === 'REFLECTION_PENDING' && !reflByLoan[l.id] && (
-                          <button
-                            className="btn btn--primary"
-                            onClick={() => setOpenReflection(openReflection === l.id ? null : l.id)}
-                          >
-                            {openReflection === l.id ? 'Close' : 'Write reflection'}
-                          </button>
+                        {loan.status === 'FINE_PENDING' && loan.fine && (
+                          <span className="text-danger">₹{loan.fine.amount} · {loan.fine.reason.replace(/_/g, ' ').toLowerCase()}</span>
                         )}
+                        {loan.status === 'WAITLISTED' && loan.queuePosition != null && (
+                          <span className="text-muted">Queue position #{loan.queuePosition}</span>
+                        )}
+                        {reflection && (
+                          <div className="row" style={{ gap: 4 }}>
+                            <StatusBadge status={reflection.status} label={`Reflection ${reflection.status.toLowerCase()}`} />
+                            {reflection.reviewNote && <span className="cell-detail">“{reflection.reviewNote}”</span>}
+                          </div>
+                        )}
+                        {!reflection && loan.status === 'REFLECTION_PENDING' && <span className="text-muted">Reflection needed</span>}
+                      </td>
+                      <td>
+                        <div className="row-actions">
+                          {cancelable && <Button size="sm" variant="danger" onClick={() => setConfirm(loan)}>Cancel</Button>}
+                          {loan.status === 'REFLECTION_PENDING' && !reflection && (
+                            <Button
+                              size="sm"
+                              variant={openReflection === loan.id ? 'secondary' : 'primary'}
+                              onClick={() => setOpenReflection(openReflection === loan.id ? null : loan.id)}
+                            >
+                              {openReflection === loan.id ? 'Close' : 'Write reflection'}
+                            </Button>
+                          )}
+                        </div>
                       </td>
                     </tr>
-                    {openReflection === l.id && (
-                      <tr className="detail-row">
-                        <td colSpan={6}><ReflectionBox loan={l} onDone={finish} toast={notify} /></td>
+                    {openReflection === loan.id && (
+                      <tr>
+                        <td colSpan={6} style={{ background: 'var(--surface-2)' }}>
+                          <ReflectionForm
+                            loan={loan}
+                            toast={toast}
+                            busy={busy}
+                            setBusy={setBusy}
+                            onCancel={() => setOpenReflection(null)}
+                            onDone={() => { setOpenReflection(null); load(); }}
+                          />
+                        </td>
                       </tr>
                     )}
                   </React.Fragment>
                 );
               })}
             </tbody>
-          </table>
-        )
+          </Table>
+          <Pagination page={data.page || 0} totalPages={data.totalPages || 1} totalItems={data.totalItems} size={data.size || size} onChange={setPage} />
+        </>
       )}
-      {active.some((l) => l.status === 'READY_FOR_PICKUP') && (
-        <p className="page-subtitle">Pick up your reserved copies at the library desk before the deadline expires.</p>
-      )}
+
+      <ConfirmDialog
+        open={Boolean(confirm)}
+        onClose={() => setConfirm(null)}
+        onConfirm={doCancel}
+        loading={busy === 'cancel'}
+        title="Cancel this request?"
+        message={confirm ? `“${confirm.bookTitle}” will be removed from your ${confirm.status === 'WAITLISTED' ? 'waitlist' : 'reserved copies'} and offered to the next student.` : ''}
+        confirmLabel="Yes, cancel request"
+      />
     </div>
   );
 }

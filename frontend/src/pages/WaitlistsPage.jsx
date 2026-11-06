@@ -1,26 +1,30 @@
-import React, { useState, useCallback } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
+import { ListOrdered } from 'lucide-react';
 import { getBooks, getWaitlistForBook } from '../api';
-import Toast from '../components/Toast';
-
-const fmtDate = (iso) => (iso ? new Date(iso).toLocaleString('en-IN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—');
+import { formatDateTime } from '../utils/format';
+import {
+  Alert, Button, EmptyState, PageHeader, Select, SkeletonTable, StatusBadge, Table,
+} from '../components/ui';
 
 export default function WaitlistsPage() {
   const [books, setBooks] = useState([]);
   const [selected, setSelected] = useState('');
   const [queue, setQueue] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [toast, setToast] = useState({ message: '', type: 'success' });
   const [error, setError] = useState('');
 
-  React.useEffect(() => {
-    getBooks({ availableOnly: false }).then(setBooks).catch((e) => setError(e.message));
+  useEffect(() => {
+    getBooks({ size: 100, sort: 'title' })
+      .then((envelope) => setBooks(envelope?.items || envelope || []))
+      .catch((e) => setError(e.message));
   }, []);
 
   const pick = useCallback(async (bookId) => {
     setSelected(bookId);
-    if (!bookId) { setQueue([]); return; }
-    setLoading(true);
+    setQueue([]);
     setError('');
+    if (!bookId) return;
+    setLoading(true);
     try {
       setQueue(await getWaitlistForBook(bookId));
     } catch (e) {
@@ -30,50 +34,54 @@ export default function WaitlistsPage() {
     }
   }, []);
 
+  const chosen = books.find((b) => b.id === selected);
+
   return (
     <div className="page">
-      <h1>Waitlists</h1>
-      <Toast message={toast.message} type={toast.type} onClose={() => setToast({ message: '', type: 'success' })} />
-      {error && <div className="banner banner--warning">{error}</div>}
+      <PageHeader
+        eyebrow="Librarian"
+        title="Waitlists"
+        subtitle="Inspect FIFO queues. Copies are offered to the oldest waiting request first."
+      />
 
-      <div className="filter-bar">
-        <select value={selected} onChange={(e) => pick(e.target.value)}>
+      {error && <Alert tone="error" title="Could not load the waitlist">{error}</Alert>}
+
+      <div className="toolbar">
+        <Select label="Book" aria-label="Select a book" value={selected} onChange={(e) => pick(e.target.value)} style={{ minWidth: 300 }}>
           <option value="">Select a book…</option>
-          {books.map((b) => (
-            <option key={b.id} value={b.id}>
-              {b.title} — {b.waitlistSize > 0 ? `${b.waitlistSize} waiting` : 'no queue'}
+          {books.map((book) => (
+            <option key={book.id} value={book.id}>
+              {book.title} — {book.waitlistSize > 0 ? `${book.waitlistSize} waiting` : 'no queue'}
             </option>
           ))}
-        </select>
+        </Select>
+        {chosen && <span className="badge badge--info">{chosen.availableCopies} available · {chosen.totalCopies} copies</span>}
       </div>
 
-      {loading ? <div className="loading">Loading…</div> : selected && (
-        queue.length === 0
-          ? <p className="empty-state">Nobody is on the waitlist for this book.</p>
-          : <table className="table">
-              <thead><tr><th>Position</th><th>Student</th><th>Status</th><th>Joined</th><th></th></tr></thead>
-              <tbody>
-                {queue.map((w, i) => (
-                  <tr key={w.id}>
-                    <td>#{i + 1}</td>
-                    <td>{w.studentName}</td>
-                    <td>
-                      <span className={`badge ${w.status === 'READY_FOR_PICKUP' ? 'badge--blue' : w.status === 'EXPIRED' ? 'badge--gray' : 'badge--yellow'}`}>
-                        {w.status.replace(/_/g, ' ')}
-                      </span>
-                    </td>
-                    <td>{fmtDate(w.joinedAt)}</td>
-                    <td>
-                      {w.status === 'READY_FOR_PICKUP' && w.pickupDeadline && (
-                        <span className="page-subtitle">deadline {fmtDate(w.pickupDeadline)}</span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+      {loading ? <SkeletonTable rows={4} columns={4} /> : !selected ? (
+        <EmptyState icon={ListOrdered} title="Choose a book" description="The ordered queue and each student's join time will appear here." />
+      ) : queue.length === 0 ? (
+        <EmptyState icon={ListOrdered} title="No one is waiting" description={`“${chosen?.title || 'This book'}” has no waiting students.`} />
+      ) : (
+        <Table>
+          <thead><tr><th>Position</th><th>Student</th><th>Status</th><th>Joined</th></tr></thead>
+          <tbody>
+            {queue.map((entry, index) => (
+              <tr key={entry.entryId || entry.id || index}>
+                <td><strong>#{entry.position || index + 1}</strong></td>
+                <td>{entry.studentName}</td>
+                <td><StatusBadge status={entry.status} /></td>
+                <td>{formatDateTime(entry.joinedAt)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </Table>
       )}
-      {!selected && <p className="empty-state">Choosing a book shows who is waiting and why.</p>}
+
+      <Alert tone="info" title="How promotion works">
+        When a copy is returned or added, the oldest WAITING entry is atomically promoted to READY_FOR_PICKUP.
+        If the student does not collect it within 48 hours, it moves to the next person.
+      </Alert>
     </div>
   );
 }
