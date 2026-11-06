@@ -20,5 +20,10 @@ public class BookRequestDto {
     private String subject;
 
     /** Optional, but if given it must be a well-formed ISBN-10/13 and not already in use. */
+    @Size(max = 20, message = "ISBN must be at most 20 characters.")
     private String isbn;
+
+    /** Optional shelf assignment; validated by the service (existence + capacity). */
+    @Size(max = 40, message = "shelfId is too long.")
+    private String shelfId;
 }

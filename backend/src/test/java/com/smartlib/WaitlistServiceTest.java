@@ -10,6 +10,10 @@ import com.smartlib.repository.WaitlistRepository;
 import com.smartlib.service.NotificationService;
 import com.smartlib.service.WaitlistService;
 import org.junit.jupiter.api.BeforeEach;
+import org.springframework.data.mongodb.core.FindAndModifyOptions;
+import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.data.mongodb.core.query.Query;
+import org.springframework.data.mongodb.core.query.Update;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
@@ -27,6 +31,7 @@ class WaitlistServiceTest {
     private CopyRepository copyRepository;
     private BookRepository bookRepository;
     private NotificationService notificationService;
+    private MongoTemplate mongoTemplate;
     private WaitlistService waitlistService;
 
     private Copy copy;
@@ -39,8 +44,9 @@ class WaitlistServiceTest {
         copyRepository = mock(CopyRepository.class);
         bookRepository = mock(BookRepository.class);
         notificationService = mock(NotificationService.class);
+        mongoTemplate = mock(MongoTemplate.class);
         waitlistService = new WaitlistService(waitlistRepository, loanRepository, userRepository,
-                copyRepository, bookRepository, notificationService, new AppProperties());
+                copyRepository, bookRepository, notificationService, mongoTemplate, new AppProperties());
 
         copy = Copy.builder().id("copy1").bookId("book1").status(CopyStatus.RESERVED).build();
     }
@@ -58,8 +64,24 @@ class WaitlistServiceTest {
         Loan promotedLoan = Loan.builder().id("loan2").studentId("s-entry1").bookId("book1")
                 .status(LoanStatus.WAITLISTED).requestDate(Instant.now()).build();
         when(loanRepository.findById("loan2")).thenReturn(Optional.of(promotedLoan));
-        when(loanRepository.save(any(Loan.class))).thenAnswer(inv -> inv.getArgument(0));
-        when(waitlistRepository.save(any(WaitlistEntry.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(copyRepository.findById("copy1")).thenReturn(Optional.of(copy));
+        when(mongoTemplate.findAndModify(any(Query.class), any(Update.class),
+                any(FindAndModifyOptions.class), eq(WaitlistEntry.class)))
+                .thenAnswer(inv -> {
+                    oldest.setStatus(WaitlistStatus.FULFILLED);
+                    oldest.setFulfilledAt(Instant.now());
+                    return oldest;
+                });
+        when(mongoTemplate.findAndModify(any(Query.class), any(Update.class),
+                any(FindAndModifyOptions.class), eq(Loan.class)))
+                .thenAnswer(inv -> {
+                    Update update = inv.getArgument(1);
+                    org.bson.Document set = (org.bson.Document) update.getUpdateObject().get("$set");
+                    promotedLoan.setStatus((LoanStatus) set.get("status"));
+                    promotedLoan.setCopyId((String) set.get("copyId"));
+                    promotedLoan.setPickupDeadline((Instant) set.get("pickupDeadline"));
+                    return promotedLoan;
+                });
 
         Loan promoted = waitlistService.releaseCopy("book1", "copy1");
 
@@ -79,6 +101,8 @@ class WaitlistServiceTest {
     void releaseCopy_emptyQueue_copyBecomesAvailable() {
         when(waitlistRepository.findFirstByBookIdAndStatusOrderByJoinedAtAsc("book1", WaitlistStatus.WAITING))
                 .thenReturn(Optional.empty());
+        when(mongoTemplate.findAndModify(any(Query.class), any(Update.class),
+                any(FindAndModifyOptions.class), eq(WaitlistEntry.class))).thenReturn(null);
         when(copyRepository.findById("copy1")).thenReturn(Optional.of(copy));
         when(copyRepository.save(any(Copy.class))).thenAnswer(inv -> inv.getArgument(0));
 

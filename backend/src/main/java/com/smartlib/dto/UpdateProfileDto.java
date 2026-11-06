@@ -11,8 +11,9 @@ import java.util.List;
 public class UpdateProfileDto {
 
     @NotBlank(message = "Name is required.")
-    @Size(min = 2, max = 60, message = "Name must be 2-60 characters.")
+    @Size(min = 2, max = 100, message = "Name must be 2-100 characters.")
     private String name;
 
-    private List<String> preferredSubjects;
+    @Size(max = 10, message = "Choose at most 10 preferred subjects.")
+    private List<@Size(max = 60, message = "Subject names are too long.") String> preferredSubjects;
 }

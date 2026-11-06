@@ -5,6 +5,7 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import org.springframework.data.annotation.Id;
+import org.springframework.data.mongodb.core.index.CompoundIndex;
 import org.springframework.data.mongodb.core.mapping.Document;
 
 import java.time.Instant;
@@ -14,6 +15,10 @@ import java.time.Instant;
 @AllArgsConstructor
 @Builder
 @Document(collection = "loans")
+@CompoundIndex(name = "loan_student_status_idx", def = "{'studentId': 1, 'status': 1}")
+@CompoundIndex(name = "loan_status_pickup_idx", def = "{'status': 1, 'pickupDeadline': 1}")
+@CompoundIndex(name = "loan_status_due_idx", def = "{'status': 1, 'dueDate': 1}")
+@CompoundIndex(name = "loan_status_issue_idx", def = "{'status': 1, 'issueDate': 1}")
 public class Loan {
 
     @Id

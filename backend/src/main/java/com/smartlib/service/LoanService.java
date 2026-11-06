@@ -4,6 +4,7 @@ import com.smartlib.config.AppProperties;
 import com.smartlib.dto.FineDto;
 import com.smartlib.dto.LoanRequestDto;
 import com.smartlib.dto.LoanResponse;
+import com.smartlib.dto.PageResponse;
 import com.smartlib.dto.ReturnLoanDto;
 import com.smartlib.exception.BusinessRuleException;
 import com.smartlib.exception.ResourceNotFoundException;
@@ -15,8 +16,11 @@ import com.smartlib.repository.LoanRepository;
 import com.smartlib.repository.ReflectionRepository;
 import com.smartlib.repository.UserRepository;
 import com.smartlib.repository.WaitlistRepository;
+import com.mongodb.client.result.UpdateResult;
 import lombok.RequiredArgsConstructor;
+import org.bson.Document;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.mongodb.core.FindAndModifyOptions;
 import org.springframework.data.mongodb.core.MongoTemplate;
@@ -27,24 +31,26 @@ import org.springframework.stereotype.Service;
 
 import java.time.Duration;
 import java.time.Instant;
-import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.stream.Collectors;
 
 /**
- * Loan state machine.
+ * Loan state machine with optimistic, status-gated writes.
  *
- * Transitions (Iteration 3):
- *   READY_FOR_PICKUP -> ISSUED (librarian) | EXPIRED (deadline passed) | CANCELLED (student)
- *   ISSUED -> OVERDUE (job) | REFLECTION_PENDING (on-time return) | FINE_PENDING (late / damaged)
- *   FINE_PENDING -> REFLECTION_PENDING (late or damaged fine paid) | CLOSED (lost fine paid)
- *   REFLECTION_PENDING -> CLOSED (reflection approved / rejected / skipped)
+ * <p>Every action that changes state performs a conditional update
+ * ({@code _id + expected status}) and treats a zero match count as a 409.
+ * That makes double-clicks, duplicate requests and two scheduler instances
+ * harmless: only the first writer transitions the loan (and therefore only it
+ * awards points or creates a fine).</p>
  *
- * RETURNED is no longer a resting state (kept in the enum for legacy data).
- * REFLECTION_PENDING does not count against max-active-loans and does not
- * block new requests for the same book.
+ * <pre>
+ * READY_FOR_PICKUP -> ISSUED | EXPIRED | CANCELLED
+ * ISSUED           -> OVERDUE | REFLECTION_PENDING (on-time) | FINE_PENDING (late/damaged)
+ * FINE_PENDING     -> REFLECTION_PENDING (late/damaged paid) | CLOSED (lost paid)
+ * REFLECTION_PENDING -> CLOSED (reflection reviewed/skipped)
+ * </pre>
  */
 @Slf4j
 @Service
@@ -75,14 +81,9 @@ public class LoanService {
     // ────────────────────────────── 1. REQUEST ──────────────────────────────
 
     public LoanResponse requestLoan(String studentId, LoanRequestDto dto) {
-        // Validate student
         User student = requireStudent(studentId);
-
-        // Validate book
         Book book = requireBook(dto.getBookId());
 
-        // No existing active loan or waitlist entry for the same student+book
-        // (REFLECTION_PENDING does not block new requests).
         loanRepository.findByStudentIdAndBookIdAndStatusIn(
                         studentId, dto.getBookId(), DUPLICATE_CHECK_STATUSES)
                 .ifPresent(l -> {
@@ -95,12 +96,10 @@ public class LoanService {
                     "You already have an active loan for this book (status: WAITLISTED).");
         }
 
-        // No pending fines
         if (fineRepository.countByStudentIdAndStatus(studentId, FineStatus.PENDING) > 0) {
             throw new BusinessRuleException("Pay your pending fines first.");
         }
 
-        // Active loan limit
         long active = loanRepository.countByStudentIdAndStatusIn(studentId, ACTIVE_LOAN_STATUSES);
         if (active >= app.getMaxActiveLoans()) {
             throw new BusinessRuleException(
@@ -109,15 +108,11 @@ public class LoanService {
 
         Instant now = Instant.now();
 
-        // If anybody is already WAITING, this student joins the queue (never skips ahead),
-        // even if a copy looks free right now.
         long waiting = waitlistService.countWaiting(book.getId());
         if (waiting > 0) {
             return addToWaitlist(student, book, now, waiting);
         }
 
-        // Try to atomically reserve a copy (AVAILABLE -> RESERVED in one findAndModify,
-        // so two students can never both take the last copy).
         Copy reserved = tryReserveCopy(book.getId());
         if (reserved != null) {
             Instant deadline = now.plus(app.getPickupDeadlineHours(), ChronoUnit.HOURS);
@@ -134,7 +129,6 @@ public class LoanService {
             return response;
         }
 
-        // No copy could be reserved -> join the queue.
         return addToWaitlist(student, book, now, 0);
     }
 
@@ -186,31 +180,36 @@ public class LoanService {
             throw new BusinessRuleException("The reserved copy is no longer available.");
         }
 
+        Instant dueDate = now.plus(app.getLoanDays(), ChronoUnit.DAYS);
+        Loan updated = transition(loan, List.of(LoanStatus.READY_FOR_PICKUP),
+                new Update().set("status", LoanStatus.ISSUED)
+                        .set("issueDate", now)
+                        .set("dueDate", dueDate));
+        if (updated == null) {
+            throw new BusinessRuleException(
+                    "This loan was already issued or changed. Refresh and try again.");
+        }
+
         copy.setStatus(CopyStatus.ISSUED);
         copyRepository.save(copy);
 
-        loan.setStatus(LoanStatus.ISSUED);
-        loan.setIssueDate(now);
-        loan.setDueDate(now.plus(app.getLoanDays(), ChronoUnit.DAYS));
-        loan = loanRepository.save(loan);
-
-        notificationService.create(loan.getStudentId(), NotificationType.ISSUED,
+        notificationService.create(updated.getStudentId(), NotificationType.ISSUED,
                 "Book issued",
-                "\"" + titleOf(loan.getBookId()).getTitle() + "\" is yours. Due back by "
-                        + DEADLINE_FORMAT.format(loan.getDueDate()) + ".",
-                loan.getId());
+                "\"" + titleOf(updated.getBookId()).getTitle() + "\" is yours. Due back by "
+                        + DEADLINE_FORMAT.format(dueDate) + ".",
+                updated.getId());
 
-        LoanResponse response = toResponse(loan, null, null);
+        LoanResponse response = toResponse(updated, null, null);
         response.setMessage("Issued. Due back by " + DEADLINE_FORMAT.format(response.getDueDate()) + ".");
         return response;
     }
 
-    // ────────────────────────────── 5. RETURN ──────────────────────────────
+    // ────────────────────────────── 3. RETURN ──────────────────────────────
 
     /**
-     * Return handling, including the damaged-book variant: materially borrowed
-     * damage turns the copy DAMAGED (kept out of circulation) and creates one
-     * fine with the late amount folded in.
+     * Return handling, including the damaged-book variant: damage turns the copy
+     * DAMAGED (kept out of circulation) and creates one fine with the late amount
+     * folded in. Only the winning conditional update performs side effects.
      */
     public LoanResponse returnLoan(String loanId, ReturnLoanDto dto) {
         Loan loan = requireLoan(loanId);
@@ -218,67 +217,70 @@ public class LoanService {
             throw new BusinessRuleException(
                     "Only ISSUED or OVERDUE loans can be returned. Current status: " + loan.getStatus());
         }
-        boolean damaged = dto != null
-                && dto.getBookCondition() == BookCondition.DAMAGED;
+        boolean damaged = dto != null && dto.getBookCondition() == BookCondition.DAMAGED;
 
         Instant now = Instant.now();
-        loan.setReturnDate(now);
-
         boolean onTime = loan.getDueDate() == null || !now.isAfter(loan.getDueDate());
         long daysLate = onTime ? 0 : (long) Math.max(1, Math.ceil(
                 Duration.between(loan.getDueDate(), now).getSeconds() / 86400.0));
 
+        LoanStatus target = damaged ? LoanStatus.FINE_PENDING
+                : onTime ? LoanStatus.REFLECTION_PENDING : LoanStatus.FINE_PENDING;
+
+        Loan updated = transition(loan, List.of(LoanStatus.ISSUED, LoanStatus.OVERDUE),
+                new Update().set("status", target).set("returnDate", now));
+        if (updated == null) {
+            throw new BusinessRuleException(
+                    "This loan has already been returned or changed. Refresh and try again.");
+        }
+        updated.setReturnDate(now);
+
         LoanResponse response;
         if (damaged) {
-            // The copy is NOT released to the queue; it needs repair first.
-            copyRepository.findById(loan.getCopyId()).ifPresent(copy -> {
+            copyRepository.findById(updated.getCopyId()).ifPresent(copy -> {
                 copy.setStatus(CopyStatus.DAMAGED);
                 copyRepository.save(copy);
             });
 
             double damagedAmount = app.getDamagedBookFine();
             double lateAmount = daysLate * app.getFinePerDay();
-            Fine fine = fineService.createDamaged(loan.getStudentId(), loanId,
-                    damagedAmount, lateAmount);
+            Fine fine = fineService.createDamaged(updated.getStudentId(), loanId, damagedAmount, lateAmount);
+            attachFine(updated, fine);
             loan.setFineId(fine.getId());
-            loan.setStatus(LoanStatus.FINE_PENDING);
-            loan = loanRepository.save(loan);
 
-            notificationService.create(loan.getStudentId(), NotificationType.FINE_IMPOSED,
+            notificationService.create(updated.getStudentId(), NotificationType.FINE_IMPOSED,
                     "Fine imposed",
-                    "The copy of \"" + titleOf(loan.getBookId()).getTitle()
+                    "The copy of \"" + titleOf(updated.getBookId()).getTitle()
                             + "\" was returned damaged. Pending fine: " + money(fine.getAmount()) + ".",
-                    loan.getId());
+                    updated.getId());
 
-            response = toResponse(loan, null, null);
+            response = toResponse(updated, null, null);
+            response.setFine(fineService.toDto(fine));
             response.setMessage("Returned DAMAGED. Pending fine: " + money(fine.getAmount())
                     + (daysLate > 0 ? " (damaged-book " + money(damagedAmount) + " + late "
                        + money(lateAmount) + ")" : "")
                     + ". Pay it to move on to your reflection.");
         } else if (onTime) {
-            loan.setStatus(LoanStatus.REFLECTION_PENDING);
-            loan = loanRepository.save(loan);
-            awardPoints(loan.getStudentId(), app.getOnTimeReturnPoints());
-            releaseCopyAfterReturn(loan);
-            response = toResponse(loan, null, null);
+            awardPoints(updated.getStudentId(), app.getOnTimeReturnPoints());
+            releaseCopyAfterReturn(updated);
+            response = toResponse(updated, null, null);
             response.setMessage("Returned on time. +" + app.getOnTimeReturnPoints()
                     + " points! Write a reflection to earn " + app.getReflectionPoints() + " more.");
         } else {
             double amount = daysLate * app.getFinePerDay();
-            Fine fine = fineService.create(loan.getStudentId(), loanId, amount, FineReason.LATE_RETURN);
+            Fine fine = fineService.create(updated.getStudentId(), loanId, amount, FineReason.LATE_RETURN);
+            attachFine(updated, fine);
             loan.setFineId(fine.getId());
-            loan.setStatus(LoanStatus.FINE_PENDING);
-            loan = loanRepository.save(loan);
-            releaseCopyAfterReturn(loan);
+            releaseCopyAfterReturn(updated);
 
-            notificationService.create(loan.getStudentId(), NotificationType.FINE_IMPOSED,
+            notificationService.create(updated.getStudentId(), NotificationType.FINE_IMPOSED,
                     "Fine imposed",
-                    "\"" + titleOf(loan.getBookId()).getTitle() + "\" was " + daysLate
+                    "\"" + titleOf(updated.getBookId()).getTitle() + "\" was " + daysLate
                             + " day(s) late. Pending fine: " + money(amount)
                             + ". Pay it to move on to your reflection.",
-                    loan.getId());
+                    updated.getId());
 
-            response = toResponse(loan, null, null);
+            response = toResponse(updated, null, null);
             response.setMessage("Late return (" + daysLate + " day(s) overdue). Pending fine: "
                     + money(amount) + ". Pay it to move on to your reflection.");
         }
@@ -290,7 +292,7 @@ public class LoanService {
         waitlistService.releaseCopy(loan.getBookId(), loan.getCopyId());
     }
 
-    // ─────────── 7. LOST ───────────
+    // ─────────── 4. LOST ───────────
 
     public LoanResponse lostLoan(String loanId) {
         Loan loan = requireLoan(loanId);
@@ -302,33 +304,37 @@ public class LoanService {
         Copy copy = copyRepository.findById(copyId)
                 .orElseThrow(() -> new ResourceNotFoundException("Copy not found: " + copyId));
 
+        Loan updated = transition(loan, List.of(LoanStatus.ISSUED, LoanStatus.OVERDUE),
+                new Update().set("status", LoanStatus.FINE_PENDING));
+        if (updated == null) {
+            throw new BusinessRuleException(
+                    "This loan has already been returned or changed. Refresh and try again.");
+        }
+
         // The copy is NOT released to the queue.
         copy.setStatus(CopyStatus.LOST);
         copyRepository.save(copy);
 
-        loan.setStatus(LoanStatus.LOST);
-        loan = loanRepository.save(loan);
-
-        Fine fine = fineService.create(loan.getStudentId(), loanId, app.getLostBookFine(), FineReason.LOST_BOOK);
+        Fine fine = fineService.create(updated.getStudentId(), loanId, app.getLostBookFine(), FineReason.LOST_BOOK);
+        attachFine(updated, fine);
         loan.setFineId(fine.getId());
-        loan.setStatus(LoanStatus.FINE_PENDING);
-        loan = loanRepository.save(loan);
 
-        notificationService.create(loan.getStudentId(), NotificationType.FINE_IMPOSED,
+        notificationService.create(updated.getStudentId(), NotificationType.FINE_IMPOSED,
                 "Fine imposed",
-                "\"" + titleOf(loan.getBookId()).getTitle()
+                "\"" + titleOf(updated.getBookId()).getTitle()
                         + "\" was marked lost. Pending fine: " + money(app.getLostBookFine()) + ".",
-                loan.getId());
+                updated.getId());
 
-        log.info("Loan {} marked LOST; copy {} is lost (not released to the queue); pending fine {} created.",
+        log.info("Loan {} marked lost; copy {} is lost (not released to the queue); pending fine {} created.",
                 loan.getId(), copy.getId(), fine.getId());
-        LoanResponse response = toResponse(loan, null, null);
+        LoanResponse response = toResponse(updated, null, null);
+        response.setFine(fineService.toDto(fine));
         response.setMessage("Marked lost. Pending fine: " + money(app.getLostBookFine())
                 + ". Pay it to close the loan.");
         return response;
     }
 
-    // ─────────── 8. CANCEL ───────────
+    // ─────────── 5. CANCEL ───────────
 
     public LoanResponse cancelLoan(String loanId, String studentId) {
         Loan loan = requireLoan(loanId);
@@ -336,19 +342,26 @@ public class LoanService {
         LoanStatus status = loan.getStatus();
 
         if (status == LoanStatus.WAITLISTED) {
-            waitlistService.cancelByLoanId(loan.getId());
+            Loan updated = transition(loan, List.of(LoanStatus.WAITLISTED),
+                    new Update().set("status", LoanStatus.CANCELLED));
+            if (updated == null) {
+                throw new BusinessRuleException("This request was already cancelled or changed.");
+            }
+            waitlistService.cancelByLoanId(updated.getId());
             loan.setStatus(LoanStatus.CANCELLED);
-            loan = loanRepository.save(loan);
-            LoanResponse response = toResponse(loan, null, null);
+            LoanResponse response = toResponse(updated, null, null);
             response.setMessage("Request cancelled. You left the queue.");
             return response;
         }
 
         if (status == LoanStatus.READY_FOR_PICKUP) {
-            loan.setStatus(LoanStatus.CANCELLED);
-            loan = loanRepository.save(loan);
-            waitlistService.releaseCopy(loan.getBookId(), loan.getCopyId());
-            LoanResponse response = toResponse(loan, null, null);
+            Loan updated = transition(loan, List.of(LoanStatus.READY_FOR_PICKUP),
+                    new Update().set("status", LoanStatus.CANCELLED));
+            if (updated == null) {
+                throw new BusinessRuleException("This request was already cancelled or changed.");
+            }
+            waitlistService.releaseCopy(updated.getBookId(), updated.getCopyId());
+            LoanResponse response = toResponse(updated, null, null);
             response.setMessage("Request cancelled. The copy moves to the next student in the queue.");
             return response;
         }
@@ -356,9 +369,8 @@ public class LoanService {
         throw new BusinessRuleException("Loans in status " + status + " cannot be cancelled.");
     }
 
-    // ─────────── SKIP REFLECTION ───────────
+    // ─────────── 6. SKIP REFLECTION ───────────
 
-    /** Student waives the reflection: loan -> CLOSED, no points. */
     public LoanResponse skipReflection(String loanId, String studentId) {
         Loan loan = requireLoan(loanId);
         requireOwnership(loan, studentId);
@@ -370,55 +382,75 @@ public class LoanService {
             throw new BusinessRuleException(
                     "You already submitted a reflection for this loan; it can no longer be skipped.");
         }
-        loan.setStatus(LoanStatus.CLOSED);
-        loan = loanRepository.save(loan);
-        LoanResponse response = toResponse(loan, null, null);
+        Loan updated = transition(loan, List.of(LoanStatus.REFLECTION_PENDING),
+                new Update().set("status", LoanStatus.CLOSED));
+        if (updated == null) {
+            throw new BusinessRuleException("This loan was already closed or changed.");
+        }
+        LoanResponse response = toResponse(updated, null, null);
         response.setMessage("Reflection skipped. The loan is now CLOSED (no reflection points awarded).");
         return response;
     }
 
-    // ─────────── 3 / 4 / reminders. SCHEDULED JOBS (+dev run-jobs) ───────────
+    // ─────────── 7. SCHEDULED JOBS (+ dev run-jobs) ───────────
 
     public int runPickupExpiryJob() {
         Instant now = Instant.now();
         List<Loan> dueToExpire = loanRepository.findByStatusAndPickupDeadlineBefore(
                 LoanStatus.READY_FOR_PICKUP, now);
-        for (Loan loan : dueToExpire) {
-            loan.setStatus(LoanStatus.EXPIRED);
-            loan = loanRepository.save(loan);
-            waitlistService.releaseCopy(loan.getBookId(), loan.getCopyId());
-            notificationService.create(loan.getStudentId(), NotificationType.EXPIRED,
-                    "Pickup window expired",
-                    "You did not pick up \"" + titleOf(loan.getBookId()).getTitle()
-                            + "\" before the deadline, so the copy moved to the next student.",
-                    loan.getId());
-            log.info("Pickup deadline passed for loan {} (book {}, copy {}): loan is now EXPIRED, copy released to the queue.",
-                    loan.getId(), loan.getBookId(), loan.getCopyId());
+        int count = 0;
+        for (Loan candidate : dueToExpire) {
+            try {
+                Loan loan = transition(candidate, List.of(LoanStatus.READY_FOR_PICKUP),
+                        new Update().set("status", LoanStatus.EXPIRED));
+                if (loan == null) {
+                    continue; // another scheduler instance already handled it
+                }
+                waitlistService.releaseCopy(loan.getBookId(), loan.getCopyId());
+                notificationService.create(loan.getStudentId(), NotificationType.EXPIRED,
+                        "Pickup window expired",
+                        "You did not pick up \"" + titleOf(loan.getBookId()).getTitle()
+                                + "\" before the deadline, so the copy moved to the next student.",
+                        loan.getId());
+                log.info("Pickup deadline passed for loan {} (book {}, copy {}): now EXPIRED, copy released.",
+                        loan.getId(), loan.getBookId(), loan.getCopyId());
+                count++;
+            } catch (Exception e) {
+                log.error("Pickup expiry job failed for loan {}: {}", candidate.getId(), e.getMessage(), e);
+            }
         }
-        return dueToExpire.size();
+        return count;
     }
 
     public int runOverdueJob() {
         Instant now = Instant.now();
         List<Loan> dueToOverdue = loanRepository.findByStatusAndDueDateBefore(LoanStatus.ISSUED, now);
-        for (Loan loan : dueToOverdue) {
-            loan.setStatus(LoanStatus.OVERDUE);
-            loanRepository.save(loan);
-            notificationService.create(loan.getStudentId(), NotificationType.OVERDUE,
-                    "Loan overdue",
-                    "\"" + titleOf(loan.getBookId()).getTitle() + "\" is overdue. Fines accrue at "
-                            + money(app.getFinePerDay()) + " per day. Please return it soon.",
-                    loan.getId());
-            log.info("Loan {} (due {}) is now OVERDUE; fines accrue at {} per day.",
-                    loan.getId(), loan.getDueDate(), app.getFinePerDay());
+        int count = 0;
+        for (Loan candidate : dueToOverdue) {
+            try {
+                Loan loan = transition(candidate, List.of(LoanStatus.ISSUED),
+                        new Update().set("status", LoanStatus.OVERDUE));
+                if (loan == null) {
+                    continue;
+                }
+                notificationService.create(loan.getStudentId(), NotificationType.OVERDUE,
+                        "Loan overdue",
+                        "\"" + titleOf(loan.getBookId()).getTitle() + "\" is overdue. Fines accrue at "
+                                + money(app.getFinePerDay()) + " per day. Please return it soon.",
+                        loan.getId());
+                log.info("Loan {} (due {}) is now OVERDUE; fines accrue at {} per day.",
+                        loan.getId(), loan.getDueDate(), app.getFinePerDay());
+                count++;
+            } catch (Exception e) {
+                log.error("Overdue job failed for loan {}: {}", candidate.getId(), e.getMessage(), e);
+            }
         }
-        return dueToOverdue.size();
+        return count;
     }
 
     /**
-     * One-shot reminders, guarded by flags on the loan so nothing repeats:
-     * - pickup deadline approaching (< app reminder window of 6 hours),
-     * - due date approaching (24 hours before; ISSUED loans only).
+     * One-shot reminders, guarded by a conditional flag update per loan so two
+     * instances can never send the same reminder twice.
      */
     public int runReminderJobs() {
         int sent = 0;
@@ -428,29 +460,51 @@ public class LoanService {
                 .findByStatusAndReminderSentFalseAndPickupDeadlineBetween(
                         LoanStatus.READY_FOR_PICKUP, now, now.plus(6, ChronoUnit.HOURS));
         for (Loan loan : pickupSoon) {
-            loan.setReminderSent(true);
-            loanRepository.save(loan);
-            notificationService.create(loan.getStudentId(), NotificationType.PICKUP_REMINDER,
-                    "Pickup deadline approaching",
-                    "Pick up \"" + titleOf(loan.getBookId()).getTitle() + "\" before "
-                            + DEADLINE_FORMAT.format(loan.getPickupDeadline())
-                            + " or the copy will move on.",
-                    loan.getId());
-            sent++;
+            try {
+                UpdateResult result = mongoTemplate.updateFirst(
+                        Query.query(Criteria.where("_id").is(loan.getId())
+                                .and("status").is(LoanStatus.READY_FOR_PICKUP)
+                                .and("reminderSent").is(false)),
+                        new Update().set("reminderSent", true), Loan.class);
+                if (result == null || result.getModifiedCount() == 0) {
+                    continue;
+                }
+                loan.setReminderSent(true);
+                notificationService.create(loan.getStudentId(), NotificationType.PICKUP_REMINDER,
+                        "Pickup deadline approaching",
+                        "Pick up \"" + titleOf(loan.getBookId()).getTitle() + "\" before "
+                                + DEADLINE_FORMAT.format(loan.getPickupDeadline())
+                                + " or the copy will move on.",
+                        loan.getId());
+                sent++;
+            } catch (Exception e) {
+                log.error("Pickup reminder failed for loan {}: {}", loan.getId(), e.getMessage(), e);
+            }
         }
 
         List<Loan> dueSoon = loanRepository
                 .findByStatusAndDueReminderSentFalseAndDueDateBetween(
                         LoanStatus.ISSUED, now, now.plus(24, ChronoUnit.HOURS));
         for (Loan loan : dueSoon) {
-            loan.setDueReminderSent(true);
-            loanRepository.save(loan);
-            notificationService.create(loan.getStudentId(), NotificationType.DUE_REMINDER,
-                    "Due date approaching",
-                    "\"" + titleOf(loan.getBookId()).getTitle() + "\" is due on "
-                            + DEADLINE_FORMAT.format(loan.getDueDate()) + ".",
-                    loan.getId());
-            sent++;
+            try {
+                UpdateResult result = mongoTemplate.updateFirst(
+                        Query.query(Criteria.where("_id").is(loan.getId())
+                                .and("status").is(LoanStatus.ISSUED)
+                                .and("dueReminderSent").is(false)),
+                        new Update().set("dueReminderSent", true), Loan.class);
+                if (result == null || result.getModifiedCount() == 0) {
+                    continue;
+                }
+                loan.setDueReminderSent(true);
+                notificationService.create(loan.getStudentId(), NotificationType.DUE_REMINDER,
+                        "Due date approaching",
+                        "\"" + titleOf(loan.getBookId()).getTitle() + "\" is due on "
+                                + DEADLINE_FORMAT.format(loan.getDueDate()) + ".",
+                        loan.getId());
+                sent++;
+            } catch (Exception e) {
+                log.error("Due reminder failed for loan {}: {}", loan.getId(), e.getMessage(), e);
+            }
         }
         return sent;
     }
@@ -490,11 +544,78 @@ public class LoanService {
                 .collect(Collectors.toList());
     }
 
+    /** Page of one student's loans, optionally filtered by a set of statuses. */
+    public PageResponse<LoanResponse> getLoansForStudent(String studentId, List<LoanStatus> statuses,
+                                                         int page, int size) {
+        Criteria criteria = Criteria.where("studentId").is(studentId);
+        if (statuses != null && !statuses.isEmpty()) {
+            criteria = criteria.and("status").in(statuses);
+        }
+        return pageLoans(Query.query(criteria), page, size);
+    }
+
+    /** Page of all loans, optionally filtered by statuses (librarian view). */
+    public PageResponse<LoanResponse> getLoansForLibrarian(List<LoanStatus> statuses, int page, int size) {
+        Criteria criteria = new Criteria();
+        if (statuses != null && !statuses.isEmpty()) {
+            criteria = Criteria.where("status").in(statuses);
+        }
+        return pageLoans(Query.query(criteria), page, size);
+    }
+
+    private PageResponse<LoanResponse> pageLoans(Query base, int page, int size) {
+        int p = Math.max(0, page);
+        int s = Math.max(1, Math.min(100, size));
+        long total = mongoTemplate.count(base, Loan.class);
+        Query query = base.with(PageRequest.of(p, s, Sort.by(Sort.Direction.DESC, "requestDate")));
+        List<LoanResponse> items = mongoTemplate.find(query, Loan.class).stream()
+                .map(loan -> toResponse(loan, null, null))
+                .collect(Collectors.toList());
+        return PageResponse.of(items, p, s, total);
+    }
+
     public List<Loan> findByStatusOrderBy(LoanStatus status, String orderByField) {
         return loanRepository.findByStatus(status, Sort.by(Sort.Direction.ASC, orderByField));
     }
 
     // ────────────────────────────── internals ──────────────────────────────
+
+    /**
+     * Conditional status transition; null means the precondition no longer held.
+     * Uses updateFirst + modifiedCount so a double click / second instance cannot
+     * apply the action twice. The in-memory entity is updated only by the winner.
+     */
+    private Loan transition(Loan loan, List<LoanStatus> expected, Update update) {
+        Query query = Query.query(Criteria.where("_id").is(loan.getId()).and("status").in(expected));
+        UpdateResult result = mongoTemplate.updateFirst(query, update, Loan.class);
+        if (result == null || result.getModifiedCount() == 0) {
+            return null;
+        }
+        applySet(loan, update);
+        return loan;
+    }
+
+    private void applySet(Loan loan, Update update) {
+        Object raw = update.getUpdateObject().get("$set");
+        if (!(raw instanceof Document set)) {
+            return;
+        }
+        if (set.containsKey("status")) {
+            Object value = set.get("status");
+            loan.setStatus(value instanceof LoanStatus s ? s : LoanStatus.valueOf(String.valueOf(value)));
+        }
+        if (set.containsKey("issueDate")) loan.setIssueDate((Instant) set.get("issueDate"));
+        if (set.containsKey("dueDate")) loan.setDueDate((Instant) set.get("dueDate"));
+        if (set.containsKey("returnDate")) loan.setReturnDate((Instant) set.get("returnDate"));
+        if (set.containsKey("copyId")) loan.setCopyId((String) set.get("copyId"));
+        if (set.containsKey("pickupDeadline")) loan.setPickupDeadline((Instant) set.get("pickupDeadline"));
+    }
+
+    private void attachFine(Loan loan, Fine fine) {
+        mongoTemplate.updateFirst(Query.query(Criteria.where("_id").is(loan.getId())),
+                new Update().set("fineId", fine.getId()), Loan.class);
+        loan.setFineId(fine.getId());
+    }
 
     private void requireOwnership(Loan loan, String studentId) {
         if (!loan.getStudentId().equals(studentId)) {

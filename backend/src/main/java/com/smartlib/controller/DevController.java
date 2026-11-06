@@ -1,23 +1,21 @@
 package com.smartlib.controller;
 
+import com.smartlib.dto.InvariantViolation;
 import com.smartlib.dto.LoanResponse;
+import com.smartlib.service.InvariantService;
 import com.smartlib.service.LoanService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Profile;
 import org.springframework.security.access.prepost.PreAuthorize;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
 import java.util.Map;
 
 /**
- * Dev/testing endpoints to simulate the passage of time without waiting for
- * the real schedules. Active only when the Spring profile "dev" is on
- * (it is the default active profile for this iteration) AND the caller is a
- * librarian.
+ * Dev/testing endpoints to simulate the passage of time and inspect data
+ * consistency. Active only when the Spring profile "dev" is on AND the caller
+ * is a librarian.
  */
 @RestController
 @RequestMapping("/api/dev")
@@ -26,6 +24,7 @@ import java.util.Map;
 public class DevController {
 
     private final LoanService loanService;
+    private final InvariantService invariantService;
 
     @PostMapping("/loans/{id}/set-due-date")
     @PreAuthorize("hasRole('LIBRARIAN')")
@@ -48,5 +47,21 @@ public class DevController {
         int overdue = loanService.runOverdueJob();
         int reminders = loanService.runReminderJobs();
         return Map.of("expiredLoans", expired, "overdueLoans", overdue, "remindersSent", reminders);
+    }
+
+    /** Consistency checker used by the demo and by tests. */
+    @GetMapping("/invariants")
+    @PreAuthorize("hasRole('LIBRARIAN')")
+    public Map<String, Object> invariants() {
+        List<InvariantViolation> violations = invariantService.check();
+        return Map.of("violations", violations, "count", violations.size());
+    }
+
+    /** Repairs the "waiting students + available copy" stuck-queue case. */
+    @PostMapping("/repair")
+    @PreAuthorize("hasRole('LIBRARIAN')")
+    public Map<String, Integer> repair() {
+        int repaired = invariantService.repairStuckQueues();
+        return Map.of("repairedCopies", repaired);
     }
 }

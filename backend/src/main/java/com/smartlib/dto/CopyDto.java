@@ -10,6 +10,7 @@ public class CopyDto {
     private String bookId;
     private CopyStatus status;
     private String condition;
+    private String shelfId;
     private String holderStudentId;
     private String holderName;
 }

@@ -20,9 +20,14 @@ public class AppProperties {
     private int damagedBookFine = 200;
     private int recommendationLimit = 8;
     private int reflectionMinLength = 50;
-    private Jwt jwt = new Jwt();
 
+    // Iteration 4
+    private boolean seedDemo = true;
+    private int notificationRetentionDays = 90;
+    private Jwt jwt = new Jwt();
     private Scheduler scheduler = new Scheduler();
+    private Cors cors = new Cors();
+    private RateLimit rateLimit = new RateLimit();
 
     @Data
     public static class Scheduler {
@@ -35,5 +40,17 @@ public class AppProperties {
     public static class Jwt {
         private String secret;
         private long expirationMinutes = 480;
+    }
+
+    @Data
+    public static class Cors {
+        /** Comma-separated list of allowed browser origins. */
+        private String allowedOrigins = "http://localhost:5173";
+    }
+
+    @Data
+    public static class RateLimit {
+        private boolean enabled = true;
+        private int attemptsPerMinute = 10;
     }
 }

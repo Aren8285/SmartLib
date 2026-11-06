@@ -20,13 +20,20 @@ public class Reflection {
     @Id
     private String id;
 
-    @Indexed(unique = false) // one reflection per loan is enforced in the service
+    @Indexed
     private String studentId;
+
+    /** One reflection per loan; the unique sparse index is the concurrency backstop. */
+    @Indexed(unique = true, sparse = true)
     private String loanId;
+
     private String bookId;
     private String content;
     private Instant submissionDate;
+
+    @Indexed
     private ReflectionStatus status;
+
     /** Librarian who reviewed, when reviewed. */
     private String reviewedBy;
     private Instant reviewedDate;

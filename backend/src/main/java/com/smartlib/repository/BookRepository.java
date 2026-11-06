@@ -10,6 +10,10 @@ public interface BookRepository extends MongoRepository<Book, String> {
 
     Book findByIsbn(String isbn);
 
+    List<Book> findByShelfIdOrderByTitleAsc(String shelfId);
+
+    long countByShelfId(String shelfId);
+
     @Query("{ '$or': [ " +
            "{ 'title': { '$regex': ?0, '$options': 'i' } }, " +
            "{ 'author': { '$regex': ?0, '$options': 'i' } }, " +
@@ -17,4 +21,3 @@ public interface BookRepository extends MongoRepository<Book, String> {
            "] }")
     List<Book> searchByQuery(String query);
 }
-

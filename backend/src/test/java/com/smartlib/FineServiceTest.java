@@ -8,7 +8,11 @@ import com.smartlib.repository.LoanRepository;
 import com.smartlib.repository.UserRepository;
 import com.smartlib.service.FineService;
 import com.smartlib.service.NotificationService;
+import com.mongodb.client.result.UpdateResult;
 import org.junit.jupiter.api.BeforeEach;
+import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.data.mongodb.core.query.Query;
+import org.springframework.data.mongodb.core.query.Update;
 import org.junit.jupiter.api.Test;
 
 import java.util.Optional;
@@ -16,6 +20,7 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
 
 class FineServiceTest {
@@ -24,6 +29,7 @@ class FineServiceTest {
     private LoanRepository loanRepository;
     private UserRepository userRepository;
     private NotificationService notificationService;
+    private MongoTemplate mongoTemplate;
     private FineService fineService;
 
     private Fine lateFine;
@@ -35,7 +41,11 @@ class FineServiceTest {
         loanRepository = mock(LoanRepository.class);
         userRepository = mock(UserRepository.class);
         notificationService = mock(NotificationService.class);
-        fineService = new FineService(fineRepository, loanRepository, userRepository, notificationService);
+        mongoTemplate = mock(MongoTemplate.class);
+        fineService = new FineService(fineRepository, loanRepository, userRepository,
+                notificationService, mongoTemplate);
+        when(mongoTemplate.updateFirst(any(Query.class), any(Update.class), any(Class.class)))
+                .thenReturn(UpdateResult.acknowledged(1L, 1L, null));
 
         lateFine = Fine.builder().id("fine1").studentId("student1").loanId("loan1")
                 .amount(15).reason(FineReason.LATE_RETURN).status(FineStatus.PENDING).build();

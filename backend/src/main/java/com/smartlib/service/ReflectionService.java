@@ -12,6 +12,7 @@ import com.smartlib.repository.ReflectionRepository;
 import com.smartlib.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
@@ -23,10 +24,10 @@ import java.util.List;
 import java.util.stream.Collectors;
 
 /**
- * Reflections complete the loan lifecycle:
- * after a (paid fines or on-time) return the loan is REFLECTION_PENDING until
- * the student submits one; approve/reject both close the loan, approval awards
- * points exactly once.
+ * Reflections complete the loan lifecycle. Review transitions are conditional
+ * (PENDING -> APPROVED/REJECTED), so double-clicking Approve awards the points
+ * exactly once. One reflection per loan is additionally enforced by a unique
+ * index and caught as a 409.
  */
 @Slf4j
 @Service
@@ -64,15 +65,23 @@ public class ReflectionService {
                     "Your reflection is too short: at least " + app.getReflectionMinLength()
                             + " characters are required (you wrote " + content.length() + ").");
         }
+        if (content.length() > 2000) {
+            throw new BusinessRuleException("A reflection must be at most 2000 characters.");
+        }
 
-        Reflection reflection = reflectionRepository.save(Reflection.builder()
-                .studentId(studentId)
-                .loanId(loan.getId())
-                .bookId(loan.getBookId())
-                .content(content)
-                .submissionDate(Instant.now())
-                .status(ReflectionStatus.PENDING)
-                .build());
+        Reflection reflection;
+        try {
+            reflection = reflectionRepository.save(Reflection.builder()
+                    .studentId(studentId)
+                    .loanId(loan.getId())
+                    .bookId(loan.getBookId())
+                    .content(content)
+                    .submissionDate(Instant.now())
+                    .status(ReflectionStatus.PENDING)
+                    .build());
+        } catch (DuplicateKeyException e) {
+            throw new BusinessRuleException("A reflection for this loan was already submitted and awaits review.");
+        }
 
         notificationService.createForLibrarians(NotificationType.REFLECTION_PENDING,
                 "New reflection awaits review",
@@ -89,22 +98,39 @@ public class ReflectionService {
     // ─────────── librarian review ───────────
 
     public ReflectionDto approve(String reflectionId, String librarianId) {
-        Reflection reflection = requirePending(reflectionId);
+        Reflection reflection = reflectionRepository.findById(reflectionId)
+                .orElseThrow(() -> new ResourceNotFoundException("Reflection not found: " + reflectionId));
+        if (reflection.getStatus() != ReflectionStatus.PENDING) {
+            throw new BusinessRuleException(
+                    "Only PENDING reflections can be reviewed. Current status: " + reflection.getStatus());
+        }
+
+        Instant now = Instant.now();
+        var result = mongoTemplate.updateFirst(
+                Query.query(Criteria.where("_id").is(reflectionId)
+                        .and("status").is(ReflectionStatus.PENDING)),
+                new Update().set("status", ReflectionStatus.APPROVED)
+                        .set("reviewedBy", librarianId)
+                        .set("reviewedDate", now),
+                Reflection.class);
+        if (result == null || result.getModifiedCount() == 0) {
+            throw new BusinessRuleException("This reflection was already reviewed. Refresh and try again.");
+        }
         reflection.setStatus(ReflectionStatus.APPROVED);
         reflection.setReviewedBy(librarianId);
-        reflection.setReviewedDate(Instant.now());
-        reflection = reflectionRepository.save(reflection);
+        reflection.setReviewedDate(now);
 
         closeLoan(reflection.getLoanId());
 
-        // Points are awarded atomically and exactly once (status gate above is the only entry point).
+        // Only the single winning review reaches this point, so points are never duplicated.
         int points = app.getReflectionPoints();
         mongoTemplate.updateFirst(
                 Query.query(Criteria.where("_id").is(reflection.getStudentId())),
                 new Update().inc("points", points),
                 User.class);
 
-        String bookTitle = bookRepository.findById(reflection.getBookId()).map(Book::getTitle).orElse("your book");
+        String bookTitle = bookRepository.findById(reflection.getBookId())
+                .map(Book::getTitle).orElse("your book");
         notificationService.create(reflection.getStudentId(), NotificationType.REFLECTION_APPROVED,
                 "Reflection approved",
                 "Your reflection on \"" + bookTitle + "\" was approved: +" + points + " points!",
@@ -115,19 +141,41 @@ public class ReflectionService {
     }
 
     public ReflectionDto reject(String reflectionId, String librarianId, String reviewNote) {
-        Reflection reflection = requirePending(reflectionId);
+        Reflection reflection = reflectionRepository.findById(reflectionId)
+                .orElseThrow(() -> new ResourceNotFoundException("Reflection not found: " + reflectionId));
+        if (reflection.getStatus() != ReflectionStatus.PENDING) {
+            throw new BusinessRuleException(
+                    "Only PENDING reflections can be reviewed. Current status: " + reflection.getStatus());
+        }
         if (reviewNote == null || reviewNote.isBlank()) {
             throw new BusinessRuleException("A review note is required when rejecting a reflection.");
         }
+        if (reviewNote.trim().length() > 500) {
+            throw new BusinessRuleException("The review note must be at most 500 characters.");
+        }
+
+        Instant now = Instant.now();
+        String note = reviewNote.trim();
+        var result = mongoTemplate.updateFirst(
+                Query.query(Criteria.where("_id").is(reflectionId)
+                        .and("status").is(ReflectionStatus.PENDING)),
+                new Update().set("status", ReflectionStatus.REJECTED)
+                        .set("reviewedBy", librarianId)
+                        .set("reviewedDate", now)
+                        .set("reviewNote", note),
+                Reflection.class);
+        if (result == null || result.getModifiedCount() == 0) {
+            throw new BusinessRuleException("This reflection was already reviewed. Refresh and try again.");
+        }
         reflection.setStatus(ReflectionStatus.REJECTED);
         reflection.setReviewedBy(librarianId);
-        reflection.setReviewedDate(Instant.now());
-        reflection.setReviewNote(reviewNote.trim());
-        reflection = reflectionRepository.save(reflection);
+        reflection.setReviewedDate(now);
+        reflection.setReviewNote(note);
 
         closeLoan(reflection.getLoanId());
 
-        String bookTitle = bookRepository.findById(reflection.getBookId()).map(Book::getTitle).orElse("your book");
+        String bookTitle = bookRepository.findById(reflection.getBookId())
+                .map(Book::getTitle).orElse("your book");
         notificationService.create(reflection.getStudentId(), NotificationType.REFLECTION_REJECTED,
                 "Reflection rejected",
                 "Your reflection on \"" + bookTitle + "\" was not approved. Librarian's note: "
@@ -137,23 +185,11 @@ public class ReflectionService {
         return toDto(reflection);
     }
 
-    private Reflection requirePending(String reflectionId) {
-        Reflection reflection = reflectionRepository.findById(reflectionId)
-                .orElseThrow(() -> new ResourceNotFoundException("Reflection not found: " + reflectionId));
-        if (reflection.getStatus() != ReflectionStatus.PENDING) {
-            throw new BusinessRuleException(
-                    "Only PENDING reflections can be reviewed. Current status: " + reflection.getStatus());
-        }
-        return reflection;
-    }
-
     private void closeLoan(String loanId) {
-        loanRepository.findById(loanId).ifPresent(loan -> {
-            if (loan.getStatus() == LoanStatus.REFLECTION_PENDING) {
-                loan.setStatus(LoanStatus.CLOSED);
-                loanRepository.save(loan);
-            }
-        });
+        mongoTemplate.updateFirst(
+                Query.query(Criteria.where("_id").is(loanId)
+                        .and("status").is(LoanStatus.REFLECTION_PENDING)),
+                new Update().set("status", LoanStatus.CLOSED), Loan.class);
     }
 
     // ─────────── queries ───────────

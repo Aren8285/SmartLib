@@ -4,6 +4,7 @@ import com.smartlib.dto.AddCopiesDto;
 import com.smartlib.dto.BookRequestDto;
 import com.smartlib.dto.BookResponse;
 import com.smartlib.dto.CopyDto;
+import com.smartlib.dto.PageResponse;
 import com.smartlib.dto.UpdateCopyStatusDto;
 import com.smartlib.exception.BusinessRuleException;
 import com.smartlib.exception.ResourceNotFoundException;
@@ -11,17 +12,25 @@ import com.smartlib.model.*;
 import com.smartlib.repository.BookRepository;
 import com.smartlib.repository.CopyRepository;
 import com.smartlib.repository.LoanRepository;
+import com.smartlib.repository.ShelfRepository;
 import com.smartlib.repository.UserRepository;
 import com.smartlib.repository.WaitlistRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.data.mongodb.core.query.Criteria;
+import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -40,25 +49,63 @@ public class BookService {
     private final LoanRepository loanRepository;
     private final UserRepository userRepository;
     private final WaitlistService waitlistService;
+    private final ShelfRepository shelfRepository;
+    private final MongoTemplate mongoTemplate;
 
     /**
-     * Combined filters: case-insensitive text on title/author (also subject, kept from
-     * iteration 1), optional exact subject, optional availableOnly.
+     * Server-side filtered, sorted and paginated catalogue. The response is a
+     * page envelope so the frontend never has to load the whole library.
      */
-    public List<BookResponse> getBooks(String query, String subject, boolean availableOnly) {
-        List<Book> books;
+    public PageResponse<BookResponse> getBooksPage(String query, String subject, Boolean availableOnly,
+                                                   int page, int size, String sort) {
+        int p = Math.max(0, page);
+        int s = Math.max(1, Math.min(100, size));
+
+        List<Criteria> filters = new ArrayList<>();
         if (StringUtils.hasText(query)) {
-            books = bookRepository.searchByQuery(query);
-        } else {
-            books = bookRepository.findAll();
+            String escaped = Pattern.quote(query.trim());
+            filters.add(new Criteria().orOperator(
+                    Criteria.where("title").regex(escaped, "i"),
+                    Criteria.where("author").regex(escaped, "i"),
+                    Criteria.where("subject").regex(escaped, "i")));
         }
-        return books.stream()
-                .filter(b -> !StringUtils.hasText(subject) || b.getSubject().equals(subject))
-                .filter(b -> !availableOnly
-                        || copyRepository.countByBookIdAndStatus(b.getId(), CopyStatus.AVAILABLE) > 0)
+        if (StringUtils.hasText(subject)) {
+            filters.add(Criteria.where("subject").is(subject));
+        }
+        if (Boolean.TRUE.equals(availableOnly)) {
+            List<String> availableBookIds = mongoTemplate.findDistinct(
+                    Query.query(Criteria.where("status").is(CopyStatus.AVAILABLE)),
+                    "bookId", Copy.class, String.class);
+            if (availableBookIds.isEmpty()) {
+                return PageResponse.of(List.of(), p, s, 0);
+            }
+            filters.add(Criteria.where("_id").in(availableBookIds));
+        }
+
+        Criteria criteria = filters.isEmpty()
+                ? new Criteria()
+                : new Criteria().andOperator(filters.toArray(new Criteria[0]));
+        Query base = Query.query(criteria);
+        long total = mongoTemplate.count(base, Book.class);
+        Query pageQuery = base.with(PageRequest.of(p, s, sortFor(sort)));
+        List<BookResponse> items = mongoTemplate.find(pageQuery, Book.class).stream()
                 .map(this::toResponse)
-                .sorted(Comparator.comparing(BookResponse::getTitle))
                 .collect(Collectors.toList());
+        return PageResponse.of(items, p, s, total);
+    }
+
+    private Sort sortFor(String sort) {
+        if (!StringUtils.hasText(sort)) {
+            return Sort.by(Sort.Direction.ASC, "title");
+        }
+        return switch (sort.trim().toLowerCase()) {
+            case "author" -> Sort.by(Sort.Direction.ASC, "author");
+            case "author_desc" -> Sort.by(Sort.Direction.DESC, "author");
+            case "newest" -> Sort.by(Sort.Direction.DESC, "createdAt");
+            case "oldest" -> Sort.by(Sort.Direction.ASC, "createdAt");
+            case "title_desc" -> Sort.by(Sort.Direction.DESC, "title");
+            default -> Sort.by(Sort.Direction.ASC, "title");
+        };
     }
 
     public List<String> getSubjects() {
@@ -75,15 +122,18 @@ public class BookService {
         return toResponse(book);
     }
 
-    // ─────────── Iteration 3: management (LIBRARIAN) ───────────
+    // ─────────── Iteration 3/4: management (LIBRARIAN) ───────────
 
     public BookResponse create(BookRequestDto dto) {
         String isbn = validateIsbn(dto.getIsbn(), null);
+        String shelfId = resolveShelf(dto.getShelfId(), null);
         Book book = bookRepository.save(Book.builder()
                 .title(dto.getTitle().trim())
                 .author(dto.getAuthor().trim())
                 .subject(dto.getSubject().trim())
                 .isbn(isbn)
+                .shelfId(shelfId)
+                .createdAt(Instant.now())
                 .build());
         log.info("Book created: {} ({})", book.getTitle(), book.getSubject());
         return toResponse(book);
@@ -93,11 +143,17 @@ public class BookService {
         Book book = bookRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Book not found: " + id));
         String isbn = validateIsbn(dto.getIsbn(), id);
+        String shelfId = resolveShelf(dto.getShelfId(), id);
+        boolean shelfChanged = !java.util.Objects.equals(book.getShelfId(), shelfId);
         book.setTitle(dto.getTitle().trim());
         book.setAuthor(dto.getAuthor().trim());
         book.setSubject(dto.getSubject().trim());
         book.setIsbn(isbn);
+        book.setShelfId(shelfId);
         book = bookRepository.save(book);
+        if (shelfChanged) {
+            applyShelfToCopies(book.getId(), shelfId);
+        }
         log.info("Book updated: {} ({})", book.getTitle(), book.getId());
         return toResponse(book);
     }
@@ -157,6 +213,7 @@ public class BookService {
                     .bookId(bookId)
                     .status(CopyStatus.AVAILABLE)
                     .condition(condition)
+                    .shelfId(book.getShelfId())
                     .build());
             added.add(copy);
             // Promote the FIFO queue as soon as the copy exists; if nobody waits the copy stays AVAILABLE.
@@ -186,7 +243,7 @@ public class BookService {
         if (!allowed) {
             throw new BusinessRuleException(
                     "Unsupported copy status change " + from + " -> " + to
-                            + ". Allowed: AVAILABLE ↔ DAMAGED (repair) and AVAILABLE → LOST.");
+                            + ". Allowed: AVAILABLE <-> DAMAGED (repair) and AVAILABLE -> LOST.");
         }
         if (StringUtils.hasText(dto.getCondition())) {
             copy.setCondition(dto.getCondition().trim());
@@ -219,6 +276,11 @@ public class BookService {
         return bookRepository.count();
     }
 
+    /** Used by reports; avoids loading statuses one by one. */
+    public long countCopiesByStatus(CopyStatus status) {
+        return copyRepository.countByStatus(status);
+    }
+
     // ─────────── mapping & validation ───────────
 
     public CopyDto toDto(Copy copy) {
@@ -227,6 +289,7 @@ public class BookService {
         d.setBookId(copy.getBookId());
         d.setStatus(copy.getStatus());
         d.setCondition(copy.getCondition());
+        d.setShelfId(copy.getShelfId());
         if (copy.getStatus() == CopyStatus.RESERVED || copy.getStatus() == CopyStatus.ISSUED) {
             loanRepository.findByCopyIdAndStatusIn(copy.getId(), List.of(
                             LoanStatus.READY_FOR_PICKUP, LoanStatus.ISSUED, LoanStatus.OVERDUE)).stream()
@@ -238,6 +301,35 @@ public class BookService {
                     });
         }
         return d;
+    }
+
+    /** Resolves an optional shelf id, validating existence and free capacity. */
+    private String resolveShelf(String shelfId, String currentBookId) {
+        if (!StringUtils.hasText(shelfId)) {
+            return null;
+        }
+        Shelf shelf = shelfRepository.findById(shelfId.trim())
+                .orElseThrow(() -> new ResourceNotFoundException("Shelf not found: " + shelfId));
+        long onShelf = bookRepository.countByShelfId(shelf.getId());
+        if (currentBookId != null) {
+            Book current = bookRepository.findById(currentBookId).orElse(null);
+            if (current != null && shelf.getId().equals(current.getShelfId())) {
+                return shelf.getId(); // unchanged, no capacity re-check
+            }
+        }
+        if (onShelf >= shelf.getCapacity()) {
+            throw new BusinessRuleException(
+                    "Shelf " + shelf.getCode() + " is full (" + onShelf + "/" + shelf.getCapacity() + ").");
+        }
+        return shelf.getId();
+    }
+
+    private void applyShelfToCopies(String bookId, String shelfId) {
+        List<Copy> copies = copyRepository.findByBookId(bookId);
+        copies.forEach(copy -> copy.setShelfId(shelfId));
+        if (!copies.isEmpty()) {
+            copyRepository.saveAll(copies);
+        }
     }
 
     private String validateIsbn(String isbn, String currentBookId) {
@@ -287,6 +379,13 @@ public class BookService {
         r.setAuthor(book.getAuthor());
         r.setSubject(book.getSubject());
         r.setIsbn(book.getIsbn());
+        r.setShelfId(book.getShelfId());
+        if (book.getShelfId() != null) {
+            shelfRepository.findById(book.getShelfId()).ifPresent(shelf -> {
+                r.setShelfSection(shelf.getSection());
+                r.setShelfCode(shelf.getCode());
+            });
+        }
         r.setAvailableCopies(copyRepository.countByBookIdAndStatus(book.getId(), CopyStatus.AVAILABLE));
         r.setTotalCopies(copyRepository.countByBookId(book.getId()));
         r.setWaitlistSize(waitlistRepository.countByBookIdAndStatus(book.getId(), WaitlistStatus.WAITING));

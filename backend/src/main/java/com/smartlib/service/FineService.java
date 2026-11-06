@@ -14,6 +14,10 @@ import com.smartlib.repository.FineRepository;
 import com.smartlib.repository.LoanRepository;
 import com.smartlib.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.data.mongodb.core.query.Criteria;
+import org.springframework.data.mongodb.core.query.Query;
+import org.springframework.data.mongodb.core.query.Update;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
@@ -28,6 +32,7 @@ public class FineService {
     private final LoanRepository loanRepository;
     private final UserRepository userRepository;
     private final NotificationService notificationService;
+    private final MongoTemplate mongoTemplate;
 
     public Fine create(String studentId, String loanId, double amount, FineReason reason) {
         return fineRepository.save(Fine.builder()
@@ -55,9 +60,9 @@ public class FineService {
     }
 
     /**
-     * Simulated payment by the fine's own owner. Unblocks the loan:
-     * LATE_RETURN / DAMAGED_BOOK -> REFLECTION_PENDING (the book came back),
-     * LOST_BOOK -> CLOSED.
+     * Simulated payment by the fine's own owner. The status flip is a conditional
+     * update, so a double-click pays once. Unblocks the loan:
+     * LATE_RETURN / DAMAGED_BOOK -> REFLECTION_PENDING, LOST_BOOK -> CLOSED.
      */
     public FineDto pay(String fineId, String studentId) {
         Fine fine = fineRepository.findById(fineId)
@@ -71,17 +76,32 @@ public class FineService {
             throw new BusinessRuleException("This fine has already been paid.");
         }
 
+        Instant now = Instant.now();
+        com.mongodb.client.result.UpdateResult result = mongoTemplate.updateFirst(
+                Query.query(Criteria.where("_id").is(fineId).and("status").is(FineStatus.PENDING)),
+                new Update().set("status", FineStatus.PAID).set("paidDate", now),
+                Fine.class);
+        if (result == null || result.getModifiedCount() == 0) {
+            throw new BusinessRuleException("This fine was already paid or changed. Refresh and try again.");
+        }
         fine.setStatus(FineStatus.PAID);
-        fine.setPaidDate(Instant.now());
-        fine = fineRepository.save(fine);
+        fine.setPaidDate(now);
 
-        Loan loan = loanRepository.findById(fine.getLoanId()).orElse(null);
-        if (loan != null && loan.getStatus() == LoanStatus.FINE_PENDING) {
-            loan.setStatus(switch (fine.getReason()) {
-                case LATE_RETURN, DAMAGED_BOOK -> LoanStatus.REFLECTION_PENDING;
-                case LOST_BOOK -> LoanStatus.CLOSED;
-            });
-            loanRepository.save(loan);
+        if (fine.getLoanId() != null) {
+            Loan loan = loanRepository.findById(fine.getLoanId()).orElse(null);
+            if (loan != null && loan.getStatus() == LoanStatus.FINE_PENDING) {
+                LoanStatus target = switch (fine.getReason()) {
+                    case LATE_RETURN, DAMAGED_BOOK -> LoanStatus.REFLECTION_PENDING;
+                    case LOST_BOOK -> LoanStatus.CLOSED;
+                };
+                com.mongodb.client.result.UpdateResult loanResult = mongoTemplate.updateFirst(
+                        Query.query(Criteria.where("_id").is(loan.getId())
+                                .and("status").is(LoanStatus.FINE_PENDING)),
+                        new Update().set("status", target), Loan.class);
+                if (loanResult != null && loanResult.getModifiedCount() > 0) {
+                    loan.setStatus(target);
+                }
+            }
         }
 
         notificationService.create(studentId, NotificationType.FINE_PAID,

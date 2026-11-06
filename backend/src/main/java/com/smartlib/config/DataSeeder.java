@@ -3,221 +3,491 @@ package com.smartlib.config;
 import com.smartlib.model.*;
 import com.smartlib.repository.BookRepository;
 import com.smartlib.repository.CopyRepository;
+import com.smartlib.repository.FineRepository;
 import com.smartlib.repository.LoanRepository;
 import com.smartlib.repository.ReflectionRepository;
+import com.smartlib.repository.ShelfRepository;
 import com.smartlib.repository.UserRepository;
+import com.smartlib.repository.WaitlistRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.CommandLineRunner;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
+/**
+ * Demo data: 12 shelves in a 4x3 floor grid, 30 books across 6 subjects,
+ * 6 students + 2 librarians, and enough historical loans to make every
+ * dashboard and report meaningful on first run. Seeding is automatic in dev
+ * and gated by APP_SEED_DEMO in production.
+ */
 @Slf4j
 @Component
 @RequiredArgsConstructor
+@ConditionalOnProperty(name = "app.seed-demo", havingValue = "true", matchIfMissing = true)
 public class DataSeeder implements CommandLineRunner {
+
+    private static final String DEMO_PASSWORD = "Password123";
 
     private final UserRepository userRepository;
     private final BookRepository bookRepository;
     private final CopyRepository copyRepository;
     private final LoanRepository loanRepository;
     private final ReflectionRepository reflectionRepository;
+    private final ShelfRepository shelfRepository;
+    private final FineRepository fineRepository;
+    private final WaitlistRepository waitlistRepository;
     private final PasswordEncoder passwordEncoder;
 
-    // Demo password for all seeded accounts.
-    private static final String DEMO_PASSWORD = "Password123";
+    private final Map<String, User> users = new LinkedHashMap<>();
+    private final Map<String, Book> books = new LinkedHashMap<>();
+    private final Map<String, List<Shelf>> shelvesBySection = new HashMap<>();
+    private final Map<String, Integer> shelfCursor = new HashMap<>();
 
     @Override
     public void run(String... args) {
+        boolean seeded = false;
+        if (shelfRepository.count() == 0) {
+            seedShelves();
+            seeded = true;
+        }
         if (userRepository.count() == 0) {
             seedUsers();
+            seeded = true;
         }
         if (bookRepository.count() == 0) {
+            loadShelves();
             seedBooksAndCopies();
             seedHistoricalActivity();
+            seeded = true;
         }
         log.info("Seed check complete.");
-        log.info("Demo accounts (dev profile): aarav@smartlib.test, diya@smartlib.test, kabir@smartlib.test, isha@smartlib.test (students), meera@smartlib.test (librarian) — shared password: {}.", DEMO_PASSWORD);
+        if (seeded) {
+            log.info("Demo accounts — students: aarav@smartlib.test, diya@smartlib.test, "
+                    + "kabir@smartlib.test, isha@smartlib.test, neha@smartlib.test, rohan@smartlib.test; "
+                    + "librarians: meera@smartlib.test, ravi@smartlib.test — password: {}.", DEMO_PASSWORD);
+        }
     }
+
+    // ─────────── shelves ───────────
+
+    private void seedShelves() {
+        log.info("Seeding 12 shelves on a 4x3 floor grid...");
+        String[][] defs = {
+                {"A1", "Computer Science", "1", "1"},
+                {"A2", "Computer Science", "1", "2"},
+                {"A3", "Computer Science", "1", "3"},
+                {"B1", "Mathematics", "2", "1"},
+                {"B2", "Mathematics", "2", "2"},
+                {"B3", "Physics", "2", "3"},
+                {"C1", "Physics", "3", "1"},
+                {"C2", "Literature", "3", "2"},
+                {"C3", "Literature", "3", "3"},
+                {"D1", "History", "4", "1"},
+                {"D2", "History", "4", "2"},
+                {"D3", "Economics", "4", "3"}
+        };
+        for (String[] def : defs) {
+            shelfRepository.save(Shelf.builder()
+                    .code(def[0])
+                    .section(def[1])
+                    .row(Integer.parseInt(def[2]))
+                    .column(Integer.parseInt(def[3]))
+                    .capacity(12)
+                    .label(def[1] + " shelves")
+                    .build());
+        }
+        loadShelves();
+        log.info("Shelves seeded.");
+    }
+
+    private void loadShelves() {
+        shelvesBySection.clear();
+        shelfCursor.clear();
+        for (Shelf shelf : shelfRepository.findAllByOrderByRowAscColumnAsc()) {
+            shelvesBySection.computeIfAbsent(shelf.getSection(), k -> new ArrayList<>()).add(shelf);
+        }
+    }
+
+    private Shelf nextShelf(String section) {
+        List<Shelf> list = shelvesBySection.getOrDefault(section, List.of());
+        if (list.isEmpty()) {
+            return null;
+        }
+        int index = shelfCursor.getOrDefault(section, 0);
+        shelfCursor.put(section, index + 1);
+        return list.get(index % list.size());
+    }
+
+    // ─────────── users ───────────
 
     private void seedUsers() {
         log.info("Seeding users...");
-        String hash = passwordEncoder.encode(DEMO_PASSWORD);
+        users.put("aarav", student("Aarav Sharma", "aarav@smartlib.test",
+                List.of("Computer Science", "Mathematics"), 90));
+        users.put("diya", student("Diya Patel", "diya@smartlib.test",
+                List.of("Literature", "Physics"), 70));
+        users.put("kabir", student("Kabir Singh", "kabir@smartlib.test",
+                List.of("Mathematics", "Computer Science"), 50));
+        users.put("isha", student("Isha Verma", "isha@smartlib.test",
+                List.of("History", "Economics"), 30));
+        users.put("neha", student("Neha Kapoor", "neha@smartlib.test",
+                List.of("Computer Science", "Literature"), 40));
+        users.put("rohan", student("Rohan Mehta", "rohan@smartlib.test",
+                List.of("Physics", "History"), 20));
 
-        userRepository.saveAll(List.of(
-            student("Aarav Student", "aarav@smartlib.test", "Computer Science", "Mathematics"),
-            student("Diya Student", "diya@smartlib.test", "Literature", "Physics"),
-            student("Kabir Student", "kabir@smartlib.test", "Mathematics", "Computer Science"),
-            student("Isha Student", "isha@smartlib.test", "History", "Economics"),
-            User.builder().name("Meera Librarian").email("meera@smartlib.test").role(Role.LIBRARIAN)
-                    .points(0).passwordHash(hash).createdAt(Instant.now()).active(true).build()
-        ));
+        users.put("meera", librarian("Meera Iyer", "meera@smartlib.test"));
+        users.put("ravi", librarian("Ravi Deshpande", "ravi@smartlib.test"));
         log.info("Users seeded.");
     }
 
-    private User student(String name, String email, String s1, String s2) {
-        return User.builder().name(name).email(email).role(Role.STUDENT)
-                .points(0)
+    private User student(String name, String email, List<String> preferredSubjects, int points) {
+        return userRepository.save(User.builder()
+                .name(name)
+                .email(email)
+                .role(Role.STUDENT)
+                .points(points)
                 .passwordHash(passwordEncoder.encode(DEMO_PASSWORD))
-                .preferredSubjects(List.of(s1, s2))
-                .createdAt(Instant.now())
+                .preferredSubjects(preferredSubjects)
+                .createdAt(Instant.now().minus(60, ChronoUnit.DAYS))
                 .active(true)
-                .build();
+                .build());
     }
 
+    private User librarian(String name, String email) {
+        return userRepository.save(User.builder()
+                .name(name)
+                .email(email)
+                .role(Role.LIBRARIAN)
+                .points(0)
+                .passwordHash(passwordEncoder.encode(DEMO_PASSWORD))
+                .createdAt(Instant.now().minus(60, ChronoUnit.DAYS))
+                .active(true)
+                .build());
+    }
+
+    // ─────────── books & copies ───────────
+
     private void seedBooksAndCopies() {
-        log.info("Seeding books and copies...");
-
-        // Computer Science — 3 books
-        Book cs1 = bookRepository.save(Book.builder()
-            .title("Introduction to Algorithms").author("Cormen, Leiserson, Rivest, Stein")
-            .subject("Computer Science").isbn("9780262046305").build());
-
-        Book cs2 = bookRepository.save(Book.builder()
-            .title("Clean Code").author("Robert C. Martin")
-            .subject("Computer Science").isbn("9780132350884").build());
-
-        Book cs3 = bookRepository.save(Book.builder()
-            .title("The Pragmatic Programmer").author("David Thomas, Andrew Hunt")
-            .subject("Computer Science").isbn("9780135957059").build());
-
-        // Mathematics — 3 books
-        Book math1 = bookRepository.save(Book.builder()
-            .title("Calculus: Early Transcendentals").author("James Stewart")
-            .subject("Mathematics").isbn("9781285741550").build());
-
-        Book math2 = bookRepository.save(Book.builder()
-            .title("Linear Algebra and Its Applications").author("Gilbert Strang")
-            .subject("Mathematics").isbn("9780030105678").build());
-
-        Book math3 = bookRepository.save(Book.builder()
-            .title("Discrete Mathematics and Its Applications").author("Kenneth Rosen")
-            .subject("Mathematics").isbn("9780073383095").build());
-
-        // Physics — 3 books
-        Book phy1 = bookRepository.save(Book.builder()
-            .title("University Physics").author("Hugh Young, Roger Freedman")
-            .subject("Physics").isbn("9780321973610").build());
-
-        Book phy2 = bookRepository.save(Book.builder()
-            .title("Concepts of Physics").author("H.C. Verma")
-            .subject("Physics").isbn("9789353435515").build());
-
-        Book phy3 = bookRepository.save(Book.builder()
-            .title("The Feynman Lectures on Physics").author("Richard Feynman")
-            .subject("Physics").isbn("9780465023820").build());
-
-        // Literature — 3 books
-        Book lit1 = bookRepository.save(Book.builder()
-            .title("To Kill a Mockingbird").author("Harper Lee")
-            .subject("Literature").isbn("9780061120084").build());
-
-        Book lit2 = bookRepository.save(Book.builder()
-            .title("1984").author("George Orwell")
-            .subject("Literature").isbn("9780451524935").build());
-
-        Book lit3 = bookRepository.save(Book.builder()
-            .title("The Great Gatsby").author("F. Scott Fitzgerald")
-            .subject("Literature").isbn("9780743273565").build());
-
-        // History — 2 books (variety for recommendations)
-        Book his1 = bookRepository.save(Book.builder()
-            .title("A People's History of the United States").author("Howard Zinn")
-            .subject("History").isbn("9780060838652").build());
-        Book his2 = bookRepository.save(Book.builder()
-            .title("Sapiens: A Brief History of Humankind").author("Yuval Noah Harari")
-            .subject("History").isbn("9780062316097").build());
-
-        // Economics — 2 books
-        Book eco1 = bookRepository.save(Book.builder()
-            .title("An Inquiry into the Nature and Causes of the Wealth of Nations").author("Adam Smith")
-            .subject("Economics").isbn("9780553585971").build());
-        Book eco2 = bookRepository.save(Book.builder()
-            .title("Freakonomics").author("Steven D. Levitt, Stephen J. Dubner")
-            .subject("Economics").isbn("9780060731328").build());
-
-        // Copies: plenty of test scenarios (1-copy books, one 0-copy book)
-        copyRepository.saveAll(List.of(
-            copy(cs1), copy(cs1),
-            copy(cs2), copy(cs2),
-            copy(cs3) // 1 copy
-        ));
-        copyRepository.saveAll(List.of(
-            copy(math1), copy(math1),
-            copy(math2) // 1 copy
-            // math3: 0 copies — unavailable book for testing
-        ));
-        copyRepository.saveAll(List.of(
-            copy(phy1), copy(phy1), copy(phy1),
-            copy(phy2), copy(phy2),
-            copy(phy3), copy(phy3)
-        ));
-        copyRepository.saveAll(List.of(
-            copy(lit1), copy(lit1),
-            copy(lit2), copy(lit2),
-            copy(lit3)
-        ));
-        copyRepository.saveAll(List.of(
-            copy(his1), copy(his1), copy(his2)
-        ));
-        copyRepository.saveAll(List.of(
-            copy(eco1), copy(eco2), copy(eco2)
-        ));
+        log.info("Seeding 30 books and their copies...");
+        // Computer Science
+        book("cs1", "Introduction to Algorithms", "Cormen, Leiserson, Rivest, Stein",
+                "Computer Science", "9780262046305", 2);
+        book("cs2", "Clean Code", "Robert C. Martin", "Computer Science", "9780132350884", 2);
+        book("cs3", "The Pragmatic Programmer", "David Thomas, Andrew Hunt",
+                "Computer Science", "9780135957059", 2);
+        book("cs4", "Designing Data-Intensive Applications", "Martin Kleppmann",
+                "Computer Science", "9781449373320", 2);
+        book("cs5", "Refactoring", "Martin Fowler", "Computer Science", "9780134757599", 2);
+        book("cs6", "The Mythical Man-Month", "Frederick P. Brooks Jr.",
+                "Computer Science", "9780201835953", 2);
+        // Mathematics
+        book("math1", "Calculus: Early Transcendentals", "James Stewart",
+                "Mathematics", "9781285741550", 2);
+        book("math2", "Linear Algebra and Its Applications", "Gilbert Strang",
+                "Mathematics", "9780030105678", 1);
+        book("math3", "Discrete Mathematics and Its Applications", "Kenneth Rosen",
+                "Mathematics", "9780073383095", 0);
+        book("math4", "Introduction to Probability", "Dimitri Bertsekas, John Tsitsiklis",
+                "Mathematics", "9781886529236", 2);
+        book("math5", "Concrete Mathematics", "Graham, Knuth, Patashnik",
+                "Mathematics", "9780201558029", 1);
+        // Physics
+        book("phy1", "University Physics", "Hugh Young, Roger Freedman",
+                "Physics", "9780321973610", 2);
+        book("phy2", "Concepts of Physics", "H.C. Verma", "Physics", "9789353435515", 2);
+        book("phy3", "The Feynman Lectures on Physics", "Richard Feynman",
+                "Physics", "9780465023820", 2);
+        book("phy4", "Six Easy Pieces", "Richard Feynman", "Physics", "9780465025275", 2);
+        book("phy5", "Astrophysics for People in a Hurry", "Neil deGrasse Tyson",
+                "Physics", "9780393609394", 2);
+        // Literature
+        book("lit1", "To Kill a Mockingbird", "Harper Lee", "Literature", "9780061120084", 2);
+        book("lit2", "1984", "George Orwell", "Literature", "9780451524935", 2);
+        book("lit3", "The Great Gatsby", "F. Scott Fitzgerald", "Literature", "9780743273565", 2);
+        book("lit4", "Pride and Prejudice", "Jane Austen", "Literature", "9780141439518", 2);
+        book("lit5", "The Catcher in the Rye", "J.D. Salinger", "Literature", "9780316769488", 2);
+        // History
+        book("his1", "A People's History of the United States", "Howard Zinn",
+                "History", "9780060838652", 2);
+        book("his2", "Sapiens: A Brief History of Humankind", "Yuval Noah Harari",
+                "History", "9780062316097", 2);
+        book("his3", "Guns, Germs, and Steel", "Jared Diamond", "History", "9780393317558", 2);
+        book("his4", "The Silk Roads", "Peter Frankopan", "History", "9781101912379", 1);
+        book("his5", "SPQR: A History of Ancient Rome", "Mary Beard", "History", "9781846683800", 2);
+        // Economics
+        book("eco1", "An Inquiry into the Nature and Causes of the Wealth of Nations",
+                "Adam Smith", "Economics", "9780553585971", 2);
+        book("eco2", "Freakonomics", "Steven D. Levitt, Stephen J. Dubner",
+                "Economics", "9780060731328", 2);
+        book("eco3", "Thinking, Fast and Slow", "Daniel Kahneman", "Economics", "9780374533557", 2);
+        book("eco4", "The Undercover Economist", "Tim Harford", "Economics", "9780199926510", 2);
 
         log.info("Books and copies seeded.");
     }
 
-    private Copy copy(Book book) {
-        return Copy.builder().bookId(book.getId()).status(CopyStatus.AVAILABLE).build();
+    private Book book(String key, String title, String author, String subject, String isbn, int copies) {
+        Shelf shelf = nextShelf(subject);
+        Book book = bookRepository.save(Book.builder()
+                .title(title)
+                .author(author)
+                .subject(subject)
+                .isbn(isbn)
+                .shelfId(shelf == null ? null : shelf.getId())
+                .createdAt(Instant.now().minus(90, ChronoUnit.DAYS))
+                .build());
+        books.put(key, book);
+        for (int i = 0; i < copies; i++) {
+            copyRepository.save(Copy.builder()
+                    .bookId(book.getId())
+                    .status(CopyStatus.AVAILABLE)
+                    .condition("GOOD")
+                    .shelfId(book.getShelfId())
+                    .build());
+        }
+        return book;
     }
 
-    /**
-     * Some finished reading for two students (+ approved reflections) so
-     * recommendations and points have something to work with on first run.
-     */
+    // ─────────── historical activity ───────────
+
     private void seedHistoricalActivity() {
-        var aarav = userRepository.findByEmail("aarav@smartlib.test").orElse(null);
-        var diya = userRepository.findByEmail("diya@smartlib.test").orElse(null);
-        if (aarav == null || diya == null) return;
+        log.info("Seeding historical loans, reflections, fines and queues...");
+        Instant now = Instant.now();
 
-        Book cs1 = bookRepository.findByIsbn("9780262046305");
-        Book phy1 = bookRepository.findByIsbn("9780321973610");
-        Book lit2 = bookRepository.findByIsbn("9780451524935");
-        if (cs1 == null || phy1 == null || lit2 == null) return;
+        // Closed loans with approved reflections (recommendation + report signal).
+        closedLoan(books.get("cs1"), users.get("aarav"), 34, 24, true);
+        closedLoan(books.get("phy1"), users.get("aarav"), 28, 18, true);
+        closedLoan(books.get("his2"), users.get("aarav"), 22, 14, true);
+        closedLoan(books.get("cs2"), users.get("aarav"), 16, 7, true);
+        closedLoan(books.get("lit2"), users.get("diya"), 30, 21, true);
+        closedLoan(books.get("lit4"), users.get("diya"), 24, 16, true);
+        closedLoan(books.get("eco2"), users.get("diya"), 18, 9, true);
+        closedLoan(books.get("math1"), users.get("kabir"), 26, 17, true);
+        closedLoan(books.get("cs3"), users.get("kabir"), 20, 12, false);
+        closedLoan(books.get("his1"), users.get("isha"), 19, 11, true);
+        closedLoan(books.get("cs4"), users.get("neha"), 15, 5, true);
+        closedLoan(books.get("lit3"), users.get("rohan"), 12, 3, false);
+        closedLoan(books.get("eco1"), users.get("aarav"), 9, 2, true);
 
-        seedClosedLoanWithReflection(aarav, cs1, "Great coverage of sorting and graph algorithms; the big-O walkthroughs finally made sense.", 20);
-        seedClosedLoanWithReflection(aarav, phy1, "Mechanics chapter exercises were tough but very satisfying; great foils for lecture notes.", 20);
-        seedClosedLoanWithReflection(diya, lit2, "Chillingly relevant and tight storytelling; the language still hits hard today.", 20);
+        // Returned, awaiting a reflection (one already has a PENDING reflection).
+        Loan kabirReflection = returnedLoan(books.get("math4"), users.get("kabir"), 10, 2,
+                LoanStatus.REFLECTION_PENDING, false);
+        Loan diyaReflection = returnedLoan(books.get("his4"), users.get("diya"), 12, 1,
+                LoanStatus.REFLECTION_PENDING, false);
+        returnedLoan(books.get("lit5"), users.get("neha"), 8, 1, LoanStatus.REFLECTION_PENDING, false);
+        reflectionRepository.save(Reflection.builder()
+                .studentId(users.get("diya").getId())
+                .loanId(diyaReflection.getId())
+                .bookId(diyaReflection.getBookId())
+                .content("A sweeping history of trade routes; the chapter on the Silk Road's "
+                        + "role in exchanging ideas, not just goods, changed how I think about "
+                        + "globalisation.")
+                .submissionDate(now.minus(20, ChronoUnit.HOURS))
+                .status(ReflectionStatus.PENDING)
+                .build());
 
-        aarav.setPoints(10 + 20 + 10 + 20); // on-time points + reflection points for two loans
-        diya.setPoints(10 + 20);
-        userRepository.saveAll(List.of(aarav, diya));
-        log.info("Historical loans + reflections seeded for Aarav and Diya.");
+        // Late/damaged returns with pending fines.
+        Loan lateFineLoan = returnedLoan(books.get("eco3"), users.get("isha"), 20, 4,
+                LoanStatus.FINE_PENDING, false);
+        attachFine(lateFineLoan, users.get("isha"), 25, FineReason.LATE_RETURN,
+                FineStatus.PENDING, 4, null, 25.0, null);
+        Loan damagedLoan = returnedLoan(books.get("phy5"), users.get("rohan"), 30, 10,
+                LoanStatus.FINE_PENDING, true);
+        attachFine(damagedLoan, users.get("rohan"), 225, FineReason.DAMAGED_BOOK,
+                FineStatus.PENDING, 10, null, 25.0, 200.0);
+
+        // A paid fine on a closed loan (collected fines report).
+        Loan paidFineLoan = closedLoan(books.get("his5"), users.get("isha"), 27, 12, true);
+        attachFine(paidFineLoan, users.get("isha"), 10, FineReason.LATE_RETURN,
+                FineStatus.PAID, 14, 8, 10.0, null);
+
+        // Live loans.
+        openLoan(books.get("cs5"), users.get("aarav"), LoanStatus.ISSUED, 3, 11);
+        openLoan(books.get("phy2"), users.get("diya"), LoanStatus.ISSUED, 6, 8);
+        openLoan(books.get("his3"), users.get("kabir"), LoanStatus.ISSUED, 1, 13);
+        openLoan(books.get("math1"), users.get("isha"), LoanStatus.OVERDUE, 21, -6);
+        openLoan(books.get("cs6"), users.get("neha"), LoanStatus.OVERDUE, 25, -3);
+        openLoan(books.get("math5"), users.get("rohan"), LoanStatus.ISSUED, 8, 6);
+
+        // Reserved copies waiting for pickup.
+        readyLoan(books.get("phy3"), users.get("rohan"), 1, 30);
+        readyLoan(books.get("eco4"), users.get("neha"), 0, 43);
+
+        // Queues: a zero-copy book and the single-copy book that is checked out.
+        waitlistedLoan(books.get("math3"), users.get("isha"), 3);
+        waitlistedLoan(books.get("math3"), users.get("neha"), 2);
+        waitlistedLoan(books.get("math5"), users.get("aarav"), 1);
+
+        // Historic fulfilled queue entries (wait-time report).
+        fulfilledEntry(closedLoanOf(books.get("cs1"), users.get("aarav")), 6, 5);
+        fulfilledEntry(closedLoanOf(books.get("lit2"), users.get("diya")), 4, 3);
+        fulfilledEntry(closedLoanOf(books.get("math1"), users.get("kabir")), 8, 6);
+
+        log.info("Historical activity seeded: loans in CLOSED, REFLECTION_PENDING, FINE_PENDING, "
+                + "ISSUED, OVERDUE, READY_FOR_PICKUP and WAITLISTED states.");
     }
 
-    private void seedClosedLoanWithReflection(User student, Book book, String content, int reflectionPoints) {
-        Instant now = Instant.now();
+    private Loan closedLoan(Book book, User student, int issuedDaysAgo, int returnedDaysAgo,
+                            boolean approvedReflection) {
+        Instant issued = Instant.now().minus(issuedDaysAgo, ChronoUnit.DAYS);
+        Instant returned = Instant.now().minus(returnedDaysAgo, ChronoUnit.DAYS);
+        Copy copy = takeAvailableCopy(book);
         Loan loan = loanRepository.save(Loan.builder()
                 .studentId(student.getId())
                 .bookId(book.getId())
+                .copyId(copy == null ? null : copy.getId())
                 .status(LoanStatus.CLOSED)
-                .requestDate(now.minus(40, ChronoUnit.DAYS))
-                .issueDate(now.minus(38, ChronoUnit.DAYS))
-                .dueDate(now.minus(24, ChronoUnit.DAYS))
-                .returnDate(now.minus(26, ChronoUnit.DAYS))
+                .requestDate(issued.minus(2, ChronoUnit.HOURS))
+                .issueDate(issued)
+                .dueDate(issued.plus(14, ChronoUnit.DAYS))
+                .returnDate(returned)
                 .build());
-        reflectionRepository.save(Reflection.builder()
+        if (approvedReflection) {
+            reflectionRepository.save(Reflection.builder()
+                    .studentId(student.getId())
+                    .loanId(loan.getId())
+                    .bookId(book.getId())
+                    .content("Reading \"" + book.getTitle() + "\" gave me a fresh perspective. "
+                            + "The arguments were well paced and I could connect several chapters "
+                            + "to my current coursework and future projects.")
+                    .submissionDate(returned.plus(6, ChronoUnit.HOURS))
+                    .status(ReflectionStatus.APPROVED)
+                    .reviewedBy(users.get("meera") == null ? null : users.get("meera").getId())
+                    .reviewedDate(returned.plus(1, ChronoUnit.DAYS))
+                    .build());
+        }
+        return loan;
+    }
+
+    private Loan returnedLoan(Book book, User student, int issuedDaysAgo, int returnedDaysAgo,
+                              LoanStatus status, boolean damagedCopy) {
+        Instant issued = Instant.now().minus(issuedDaysAgo, ChronoUnit.DAYS);
+        Instant returned = Instant.now().minus(returnedDaysAgo, ChronoUnit.DAYS);
+        Copy copy = takeAvailableCopy(book);
+        if (copy != null && damagedCopy) {
+            copy.setStatus(CopyStatus.DAMAGED);
+            copyRepository.save(copy);
+        }
+        return loanRepository.save(Loan.builder()
+                .studentId(student.getId())
+                .bookId(book.getId())
+                .copyId(copy == null ? null : copy.getId())
+                .status(status)
+                .requestDate(issued.minus(2, ChronoUnit.HOURS))
+                .issueDate(issued)
+                .dueDate(issued.plus(14, ChronoUnit.DAYS))
+                .returnDate(returned)
+                .build());
+    }
+
+    private Loan openLoan(Book book, User student, LoanStatus status,
+                          int issuedDaysAgo, int dueInDaysFromNow) {
+        Instant issued = Instant.now().minus(issuedDaysAgo, ChronoUnit.DAYS);
+        Copy copy = takeAvailableCopy(book);
+        if (copy != null) {
+            copy.setStatus(CopyStatus.ISSUED);
+            copyRepository.save(copy);
+        }
+        return loanRepository.save(Loan.builder()
+                .studentId(student.getId())
+                .bookId(book.getId())
+                .copyId(copy == null ? null : copy.getId())
+                .status(status)
+                .requestDate(issued.minus(2, ChronoUnit.HOURS))
+                .issueDate(issued)
+                .dueDate(Instant.now().plus(dueInDaysFromNow, ChronoUnit.DAYS))
+                .build());
+    }
+
+    private Loan readyLoan(Book book, User student, int requestedDaysAgo, int pickupInHours) {
+        Instant requested = Instant.now().minus(requestedDaysAgo, ChronoUnit.DAYS);
+        Copy copy = takeAvailableCopy(book);
+        if (copy != null) {
+            copy.setStatus(CopyStatus.RESERVED);
+            copyRepository.save(copy);
+        }
+        return loanRepository.save(Loan.builder()
+                .studentId(student.getId())
+                .bookId(book.getId())
+                .copyId(copy == null ? null : copy.getId())
+                .status(LoanStatus.READY_FOR_PICKUP)
+                .requestDate(requested)
+                .pickupDeadline(Instant.now().plus(pickupInHours, ChronoUnit.HOURS))
+                .build());
+    }
+
+    private Loan waitlistedLoan(Book book, User student, int joinedDaysAgo) {
+        Instant joined = Instant.now().minus(joinedDaysAgo, ChronoUnit.DAYS);
+        Loan loan = loanRepository.save(Loan.builder()
+                .studentId(student.getId())
+                .bookId(book.getId())
+                .status(LoanStatus.WAITLISTED)
+                .requestDate(joined)
+                .build());
+        waitlistRepository.save(WaitlistEntry.builder()
+                .bookId(book.getId())
                 .studentId(student.getId())
                 .loanId(loan.getId())
-                .bookId(book.getId())
-                .content(content)
-                .submissionDate(loan.getReturnDate())
-                .status(ReflectionStatus.APPROVED)
-                .reviewedDate(loan.getReturnDate() == null ? now : loan.getReturnDate().plus(2, ChronoUnit.DAYS))
+                .joinedAt(joined)
+                .status(WaitlistStatus.WAITING)
                 .build());
+        return loan;
+    }
+
+    private void fulfilledEntry(Loan loan, int joinedDaysAgo, int fulfilledDaysAgo) {
+        if (loan == null) return;
+        waitlistRepository.save(WaitlistEntry.builder()
+                .bookId(loan.getBookId())
+                .studentId(loan.getStudentId())
+                .loanId(loan.getId())
+                .joinedAt(Instant.now().minus(joinedDaysAgo, ChronoUnit.DAYS))
+                .fulfilledAt(Instant.now().minus(fulfilledDaysAgo, ChronoUnit.DAYS))
+                .status(WaitlistStatus.FULFILLED)
+                .build());
+    }
+
+    private Loan closedLoanOf(Book book, User student) {
+        return loanRepository.findByStudentIdOrderByRequestDateDesc(student.getId()).stream()
+                .filter(l -> l.getBookId().equals(book.getId()) && l.getStatus() == LoanStatus.CLOSED)
+                .findFirst().orElse(null);
+    }
+
+    private void attachFine(Loan loan, User student, double amount, FineReason reason,
+                            FineStatus status, int issuedDaysAgo, Integer paidDaysAgo,
+                            Double lateAmount, Double damagedAmount) {
+        Instant issued = Instant.now().minus(issuedDaysAgo, ChronoUnit.DAYS);
+        Fine fine = fineRepository.save(Fine.builder()
+                .studentId(student.getId())
+                .loanId(loan.getId())
+                .amount(amount)
+                .reason(reason)
+                .issueDate(issued)
+                .paidDate(paidDaysAgo == null ? null : Instant.now().minus(paidDaysAgo, ChronoUnit.DAYS))
+                .status(status)
+                .lateAmount(lateAmount)
+                .damagedAmount(damagedAmount)
+                .build());
+        loan.setFineId(fine.getId());
+        loanRepository.save(loan);
+    }
+
+    private Copy takeAvailableCopy(Book book) {
+        return copyRepository.findByBookIdAndStatus(book.getId(), CopyStatus.AVAILABLE).stream()
+                .findFirst()
+                .orElseGet(() -> copyRepository.save(Copy.builder()
+                        .bookId(book.getId())
+                        .status(CopyStatus.AVAILABLE)
+                        .condition("GOOD")
+                        .shelfId(book.getShelfId())
+                        .build()));
     }
 }

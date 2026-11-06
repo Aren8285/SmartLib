@@ -9,6 +9,12 @@ import com.smartlib.repository.UserRepository;
 import com.smartlib.repository.WaitlistRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.mongodb.core.FindAndModifyOptions;
+import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.data.mongodb.core.query.Criteria;
+import org.springframework.data.mongodb.core.query.Query;
+import org.springframework.data.mongodb.core.query.Update;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
@@ -17,8 +23,13 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * FIFO waitlist. Queue positions are always computed from joinedAt order
- * among WAITING entries; they are never stored.
+ * FIFO waitlist. Queue positions are always computed from joinedAt order among
+ * WAITING entries; they are never stored.
+ *
+ * <p>Promotion claims the oldest entry with a single atomic findAndModify
+ * (WAITING -> FULFILLED). Two simultaneous returns/copy additions therefore
+ * cannot promote the same entry twice: the loser gets the next entry or simply
+ * leaves the copy AVAILABLE.</p>
  */
 @Slf4j
 @Service
@@ -31,6 +42,7 @@ public class WaitlistService {
     private final CopyRepository copyRepository;
     private final BookRepository bookRepository;
     private final NotificationService notificationService;
+    private final MongoTemplate mongoTemplate;
     private final AppProperties app;
 
     public WaitlistEntry join(String bookId, String studentId, String loanId) {
@@ -69,15 +81,15 @@ public class WaitlistService {
     }
 
     /**
-     * Shared "release copy" routine (used by return, pickup expiry and
-     * cancel-while-READY_FOR_PICKUP):
-     * - if someone is WAITING, the oldest entry is promoted: the copy stays
-     *   RESERVED for them, their loan goes WAITLISTED -> READY_FOR_PICKUP with
-     *   a fresh pickup deadline;
-     * - if the queue is empty, the copy goes back to AVAILABLE.
-     * Because each promoted loan keeps the same copy, chaining works: if the
-     * promoted student lets the deadline expire, the next release call
-     * promotes the next WAITING student.
+     * Shared "release copy" routine (used by return, pickup expiry,
+     * cancel-while-READY_FOR_PICKUP, repaired copy and added copies):
+     * <ul>
+     *   <li>atomically claims the oldest WAITING entry (-> FULFILLED, fulfilledAt),</li>
+     *   <li>atomically flips its loan WAITLISTED -> READY_FOR_PICKUP with the copy,</li>
+     *   <li>if the loan cannot be promoted (stale entry) it is skipped and the next
+     *       entry is considered,</li>
+     *   <li>when nobody can be promoted the copy goes AVAILABLE.</li>
+     * </ul>
      *
      * @return the promoted loan, or null if nobody was promoted.
      */
@@ -85,49 +97,64 @@ public class WaitlistService {
         if (copyId == null) {
             return null;
         }
-        Optional<WaitlistEntry> nextOpt = waitlistRepository.findFirstByBookIdAndStatusOrderByJoinedAtAsc(bookId, WaitlistStatus.WAITING);
-        if (nextOpt.isEmpty()) {
-            copyRepository.findById(copyId).ifPresent(copy -> {
-                copy.setStatus(CopyStatus.AVAILABLE);
-                copyRepository.save(copy);
-            });
-            log.info("Released copy {} of book {} back to AVAILABLE (no waiting students).", copyId, bookId);
-            return null;
-        }
-
-        WaitlistEntry next = nextOpt.get();
-        next.setStatus(WaitlistStatus.FULFILLED);
-        waitlistRepository.save(next);
-
-        Loan promoted = loanRepository.findById(next.getLoanId()).orElse(null);
-        if (promoted == null || promoted.getStatus() != LoanStatus.WAITLISTED) {
-            log.warn("Waitlist entry {} has no WAITLISTED loan behind it; copy {} stays reserved.", next.getId(), copyId);
-            return null;
-        }
-
         Instant now = Instant.now();
-        promoted.setStatus(LoanStatus.READY_FOR_PICKUP);
-        promoted.setCopyId(copyId);
-        promoted.setPickupDeadline(now.plus(app.getPickupDeadlineHours(), ChronoUnit.HOURS));
-        loanRepository.save(promoted);
+        while (true) {
+            WaitlistEntry claimed = mongoTemplate.findAndModify(
+                    Query.query(Criteria.where("bookId").is(bookId)
+                                    .and("status").is(WaitlistStatus.WAITING))
+                            .with(Sort.by(Sort.Direction.ASC, "joinedAt")),
+                    new Update().set("status", WaitlistStatus.FULFILLED)
+                            .set("fulfilledAt", now),
+                    FindAndModifyOptions.options().returnNew(true),
+                    WaitlistEntry.class);
 
-        copyRepository.findById(copyId).ifPresent(copy -> {
-            if (copy.getStatus() != CopyStatus.RESERVED) {
-                copy.setStatus(CopyStatus.RESERVED);
-                copyRepository.save(copy);
+            if (claimed == null) {
+                copyRepository.findById(copyId).ifPresent(copy -> {
+                    if (copy.getStatus() != CopyStatus.AVAILABLE) {
+                        copy.setStatus(CopyStatus.AVAILABLE);
+                        copyRepository.save(copy);
+                    }
+                });
+                log.info("Released copy {} of book {} back to AVAILABLE (no waiting students).", copyId, bookId);
+                return null;
             }
-        });
 
-        String bookTitle = bookRepository.findById(promoted.getBookId()).map(Book::getTitle).orElse("your book");
-        notificationService.create(promoted.getStudentId(), NotificationType.PROMOTED,
-                "It's your turn: pick up " + bookTitle,
-                "You moved up the queue for \"" + bookTitle + "\". The copy is held for you until "
-                        + java.time.format.DateTimeFormatter.ofPattern("MMM d, HH:mm")
-                                .withZone(java.time.ZoneId.systemDefault())
-                                .format(promoted.getPickupDeadline()) + ".",
-                promoted.getId());
+            Instant deadline = now.plus(app.getPickupDeadlineHours(), ChronoUnit.HOURS);
+            Loan promoted = mongoTemplate.findAndModify(
+                    Query.query(Criteria.where("_id").is(claimed.getLoanId())
+                            .and("status").is(LoanStatus.WAITLISTED)),
+                    new Update().set("status", LoanStatus.READY_FOR_PICKUP)
+                            .set("copyId", copyId)
+                            .set("pickupDeadline", deadline),
+                    FindAndModifyOptions.options().returnNew(true),
+                    Loan.class);
 
-        log.info("Promoted waitlist entry {} : loan {} is now READY_FOR_PICKUP, holding copy {}.", next.getId(), promoted.getId(), copyId);
-        return promoted;
+            if (promoted == null) {
+                log.warn("Waitlist entry {} has no WAITLISTED loan behind it; trying the next entry.",
+                        claimed.getId());
+                continue;
+            }
+
+            copyRepository.findById(copyId).ifPresent(copy -> {
+                if (copy.getStatus() != CopyStatus.RESERVED) {
+                    copy.setStatus(CopyStatus.RESERVED);
+                    copyRepository.save(copy);
+                }
+            });
+
+            String bookTitle = bookRepository.findById(promoted.getBookId())
+                    .map(Book::getTitle).orElse("your book");
+            notificationService.create(promoted.getStudentId(), NotificationType.PROMOTED,
+                    "It's your turn: pick up " + bookTitle,
+                    "You moved up the queue for \"" + bookTitle + "\". The copy is held for you until "
+                            + java.time.format.DateTimeFormatter.ofPattern("MMM d, HH:mm")
+                                    .withZone(java.time.ZoneId.systemDefault())
+                                    .format(deadline) + ".",
+                    promoted.getId());
+
+            log.info("Promoted waitlist entry {}: loan {} is now READY_FOR_PICKUP, holding copy {}.",
+                    claimed.getId(), promoted.getId(), copyId);
+            return promoted;
+        }
     }
 }

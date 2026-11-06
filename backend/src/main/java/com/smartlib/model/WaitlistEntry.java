@@ -1,10 +1,11 @@
 package com.smartlib.model;
 
-import lombok.Data;
-import lombok.NoArgsConstructor;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
+import lombok.Data;
+import lombok.NoArgsConstructor;
 import org.springframework.data.annotation.Id;
+import org.springframework.data.mongodb.core.index.CompoundIndex;
 import org.springframework.data.mongodb.core.mapping.Document;
 
 import java.time.Instant;
@@ -14,6 +15,8 @@ import java.time.Instant;
 @AllArgsConstructor
 @Builder
 @Document(collection = "waitlist")
+@CompoundIndex(name = "waitlist_book_status_joined_idx",
+        def = "{'bookId': 1, 'status': 1, 'joinedAt': 1}")
 public class WaitlistEntry {
 
     @Id
@@ -24,6 +27,9 @@ public class WaitlistEntry {
     private String loanId;
 
     private Instant joinedAt;
+
+    /** Set when the queue entry is fulfilled; used by the wait-time report. */
+    private Instant fulfilledAt;
 
     @Builder.Default
     private WaitlistStatus status = WaitlistStatus.WAITING;

@@ -11,6 +11,7 @@ import com.smartlib.repository.ReflectionRepository;
 import com.smartlib.repository.UserRepository;
 import com.smartlib.service.NotificationService;
 import com.smartlib.service.ReflectionService;
+import com.mongodb.client.result.UpdateResult;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.mongodb.core.MongoTemplate;
@@ -50,6 +51,8 @@ class ReflectionServiceTest {
 
         reflectionService = new ReflectionService(reflectionRepository, loanRepository, bookRepository,
                 userRepository, notificationService, mongoTemplate, new AppProperties());
+        when(mongoTemplate.updateFirst(any(Query.class), any(Update.class), any(Class.class)))
+                .thenReturn(UpdateResult.acknowledged(1L, 1L, null));
 
         student = User.builder().id("student1").name("Aarav Student").role(Role.STUDENT).build();
         librarian = User.builder().id("lib1").name("Meera Librarian").role(Role.LIBRARIAN).build();
@@ -123,7 +126,8 @@ class ReflectionServiceTest {
         ReflectionDto dto = reflectionService.approve("r1", "lib1");
 
         assertThat(dto.getStatus()).isEqualTo(ReflectionStatus.APPROVED);
-        assertThat(loan.getStatus()).isEqualTo(LoanStatus.CLOSED);
+        // closeLoan uses the same status-gated update, so a double click cannot close twice
+        verify(mongoTemplate).updateFirst(any(Query.class), any(Update.class), eq(Loan.class));
         // atomic, single points increment
         verify(mongoTemplate, times(1)).updateFirst(any(Query.class), any(Update.class), eq(User.class));
         assertThat(dto.getReviewedBy()).isEqualTo("lib1");
@@ -165,7 +169,7 @@ class ReflectionServiceTest {
 
         assertThat(dto.getStatus()).isEqualTo(ReflectionStatus.REJECTED);
         assertThat(dto.getReviewNote()).isEqualTo("Too vague; add concrete examples.");
-        assertThat(loan.getStatus()).isEqualTo(LoanStatus.CLOSED);
+        verify(mongoTemplate).updateFirst(any(Query.class), any(Update.class), eq(Loan.class));
         verify(mongoTemplate, never()).updateFirst(any(Query.class), any(Update.class), eq(User.class));
         verify(notificationService).create(eq("student1"), eq(NotificationType.REFLECTION_REJECTED),
                 anyString(), contains("Too vague"), eq("loan1"));

@@ -9,8 +9,10 @@ import com.smartlib.model.*;
 import com.smartlib.repository.BookRepository;
 import com.smartlib.repository.CopyRepository;
 import com.smartlib.repository.LoanRepository;
+import com.smartlib.repository.ShelfRepository;
 import com.smartlib.repository.UserRepository;
 import com.smartlib.repository.WaitlistRepository;
+import org.springframework.data.mongodb.core.MongoTemplate;
 import com.smartlib.service.BookService;
 import com.smartlib.service.WaitlistService;
 import org.junit.jupiter.api.BeforeEach;
@@ -32,6 +34,8 @@ class BookServiceManagementTest {
     private LoanRepository loanRepository;
     private UserRepository userRepository;
     private WaitlistService waitlistService;
+    private ShelfRepository shelfRepository;
+    private MongoTemplate mongoTemplate;
     private BookService bookService;
 
     private Book book;
@@ -44,9 +48,11 @@ class BookServiceManagementTest {
         loanRepository = mock(LoanRepository.class);
         userRepository = mock(UserRepository.class);
         waitlistService = mock(WaitlistService.class);
+        shelfRepository = mock(ShelfRepository.class);
+        mongoTemplate = mock(MongoTemplate.class);
 
         bookService = new BookService(bookRepository, copyRepository, waitlistRepository,
-                loanRepository, userRepository, waitlistService);
+                loanRepository, userRepository, waitlistService, shelfRepository, mongoTemplate);
 
         book = Book.builder().id("book1").title("Clean Code").author("Robert C. Martin")
                 .subject("Computer Science").isbn("9780132350884").build();

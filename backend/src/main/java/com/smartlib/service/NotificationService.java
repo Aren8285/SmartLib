@@ -3,7 +3,6 @@ package com.smartlib.service;
 import com.smartlib.model.Notification;
 import com.smartlib.model.NotificationType;
 import com.smartlib.model.Role;
-import com.smartlib.model.User;
 import com.smartlib.repository.NotificationRepository;
 import com.smartlib.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
@@ -11,6 +10,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 
 /**
@@ -73,5 +73,15 @@ public class NotificationService {
         unread.forEach(n -> n.setRead(true));
         notificationRepository.saveAll(unread);
         return unread.size();
+    }
+
+    /** Weekly cleanup: notifications older than the retention window are deleted. */
+    public int purgeOlderThanDays(int days) {
+        int removed = (int) notificationRepository.deleteByCreatedAtBefore(
+                Instant.now().minus(days, ChronoUnit.DAYS));
+        if (removed > 0) {
+            log.info("Purged {} notification(s) older than {} days.", removed, days);
+        }
+        return removed;
     }
 }

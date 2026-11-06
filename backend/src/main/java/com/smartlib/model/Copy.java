@@ -1,10 +1,11 @@
 package com.smartlib.model;
 
-import lombok.Data;
-import lombok.NoArgsConstructor;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
+import lombok.Data;
+import lombok.NoArgsConstructor;
 import org.springframework.data.annotation.Id;
+import org.springframework.data.mongodb.core.index.CompoundIndex;
 import org.springframework.data.mongodb.core.mapping.Document;
 
 @Data
@@ -12,6 +13,7 @@ import org.springframework.data.mongodb.core.mapping.Document;
 @AllArgsConstructor
 @Builder
 @Document(collection = "copies")
+@CompoundIndex(name = "copy_book_status_idx", def = "{'bookId': 1, 'status': 1}")
 public class Copy {
 
     @Id
@@ -24,5 +26,7 @@ public class Copy {
 
     @Builder.Default
     private String condition = "GOOD";
-}
 
+    /** Optional per-copy shelf; defaults to the book's shelf at creation time. */
+    private String shelfId;
+}

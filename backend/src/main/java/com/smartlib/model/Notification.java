@@ -15,7 +15,8 @@ import java.time.Instant;
 @AllArgsConstructor
 @Builder
 @Document(collection = "notifications")
-@CompoundIndex(name = "unread_idx", def = "{'userId': 1, 'read': 1}")
+@CompoundIndex(name = "notification_user_read_created_idx",
+        def = "{'userId': 1, 'read': 1, 'createdAt': -1}")
 public class Notification {
 
     @Id

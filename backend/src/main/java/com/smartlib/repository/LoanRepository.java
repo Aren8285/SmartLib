@@ -59,6 +59,11 @@ public interface LoanRepository extends MongoRepository<Loan, String> {
 
     long countByStudentIdAndStatusInAndBookId(String studentId, List<LoanStatus> statuses, String bookId);
 
+    /** Invariant checker: copies held by exactly one loan. */
+    long countByCopyIdAndStatus(String copyId, LoanStatus status);
+
+    long countByCopyIdAndStatusIn(String copyId, List<LoanStatus> statuses);
+
     /** Borrow count across the library (popular books). */
     @Query("{ 'status': { $in: ?0 } }")
     List<Loan> findAllInStatuses(List<LoanStatus> statuses);

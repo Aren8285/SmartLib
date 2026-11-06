@@ -12,6 +12,7 @@ import com.smartlib.service.FineService;
 import com.smartlib.service.LoanService;
 import com.smartlib.service.NotificationService;
 import com.smartlib.service.WaitlistService;
+import com.mongodb.client.result.UpdateResult;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.mongodb.core.FindAndModifyOptions;
@@ -68,6 +69,11 @@ class LoanServiceStateMachineTest {
         loanService = new LoanService(loanRepository, userRepository, bookRepository, copyRepository,
                 waitlistRepository, fineRepository, reflectionRepository, mongoTemplate,
                 waitlistService, fineService, notificationService, app);
+
+        // Every conditional update succeeds unless a test overrides it; this mirrors
+        // the normal path where exactly one writer wins the status precondition.
+        when(mongoTemplate.updateFirst(any(Query.class), any(Update.class), any(Class.class)))
+                .thenReturn(UpdateResult.acknowledged(1L, 1L, null));
 
         student = User.builder().id("student1").name("Aarav Student")
                 .email("aarav@smartlib.test").role(Role.STUDENT).points(0).build();
