@@ -33,7 +33,9 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 /**
@@ -392,7 +394,62 @@ public class LoanService {
         return response;
     }
 
-    // ─────────── 7. SCHEDULED JOBS (+ dev run-jobs) ───────────
+    // ─────────── 7. SELF-SERVICE RENEWAL ───────────
+
+    /**
+     * Extends an issued loan when the copy is not needed by another reader.
+     * Renewal is deliberately blocked once a queue exists so self-service never
+     * jumps ahead of a student who is waiting.
+     */
+    public LoanResponse renewLoan(String loanId, String studentId) {
+        Loan loan = requireLoan(loanId);
+        requireOwnership(loan, studentId);
+        if (loan.getStatus() != LoanStatus.ISSUED) {
+            throw new BusinessRuleException(
+                    "Only issued loans can be renewed. Current status: " + loan.getStatus() + ".");
+        }
+        Instant now = Instant.now();
+        if (loan.getDueDate() == null || !now.isBefore(loan.getDueDate())) {
+            throw new BusinessRuleException("Overdue loans cannot be renewed; please return the book.");
+        }
+        if (waitlistService.countWaiting(loan.getBookId()) > 0) {
+            throw new BusinessRuleException(
+                    "Another student is waiting for this book. Please return it so the queue can move.");
+        }
+        int used = loan.getRenewalCount();
+        if (used >= app.getMaxRenewals()) {
+            throw new BusinessRuleException(
+                    "Renewal limit reached (" + app.getMaxRenewals() + "). Please return the book.");
+        }
+
+        Instant newDueDate = loan.getDueDate().plus(app.getLoanDays(), ChronoUnit.DAYS);
+        Criteria renewalGuard = used == 0
+                ? new Criteria().orOperator(
+                        Criteria.where("renewalCount").is(0),
+                        Criteria.where("renewalCount").exists(false))
+                : Criteria.where("renewalCount").is(used);
+        Loan updated = transition(loan, List.of(LoanStatus.ISSUED),
+                new Update().set("dueDate", newDueDate)
+                        .set("renewalCount", used + 1)
+                        .set("dueReminderSent", false), renewalGuard);
+        if (updated == null) {
+            throw new BusinessRuleException(
+                    "This loan was already renewed or changed. Refresh and try again.");
+        }
+
+        String title = titleOf(updated.getBookId()).getTitle();
+        notificationService.create(updated.getStudentId(), NotificationType.RENEWED,
+                "Loan renewed",
+                "\"" + title + "\" is renewed. The new due date is "
+                        + DEADLINE_FORMAT.format(newDueDate) + ".",
+                updated.getId());
+
+        LoanResponse response = toResponse(updated, null, null);
+        response.setMessage("Renewed. Due back by " + DEADLINE_FORMAT.format(newDueDate) + ".");
+        return response;
+    }
+
+    // ─────────── 8. SCHEDULED JOBS (+ dev run-jobs) ───────────
 
     public int runPickupExpiryJob() {
         Instant now = Instant.now();
@@ -554,12 +611,35 @@ public class LoanService {
         return pageLoans(Query.query(criteria), page, size);
     }
 
-    /** Page of all loans, optionally filtered by statuses (librarian view). */
-    public PageResponse<LoanResponse> getLoansForLibrarian(List<LoanStatus> statuses, int page, int size) {
-        Criteria criteria = new Criteria();
+    /** Page of all loans, optionally filtered by statuses and a desk search (librarian view). */
+    public PageResponse<LoanResponse> getLoansForLibrarian(
+            List<LoanStatus> statuses, String search, int page, int size) {
+        List<Criteria> clauses = new ArrayList<>();
         if (statuses != null && !statuses.isEmpty()) {
-            criteria = Criteria.where("status").in(statuses);
+            clauses.add(Criteria.where("status").in(statuses));
         }
+        if (search != null && !search.isBlank()) {
+            String term = search.trim();
+            List<String> studentIds = userRepository
+                    .findByNameContainingIgnoreCaseOrEmailContainingIgnoreCase(term, term).stream()
+                    .map(User::getId)
+                    .collect(Collectors.toList());
+            List<String> bookIds = bookRepository.searchByQuery(term).stream()
+                    .map(Book::getId)
+                    .collect(Collectors.toList());
+            List<Criteria> matches = new ArrayList<>();
+            if (!studentIds.isEmpty()) {
+                matches.add(Criteria.where("studentId").in(studentIds));
+            }
+            if (!bookIds.isEmpty()) {
+                matches.add(Criteria.where("bookId").in(bookIds));
+            }
+            matches.add(Criteria.where("copyId").regex(Pattern.quote(term), "i"));
+            clauses.add(new Criteria().orOperator(matches.toArray(new Criteria[0])));
+        }
+        Criteria criteria = clauses.isEmpty()
+                ? new Criteria()
+                : new Criteria().andOperator(clauses.toArray(new Criteria[0]));
         return pageLoans(Query.query(criteria), page, size);
     }
 
@@ -586,7 +666,15 @@ public class LoanService {
      * apply the action twice. The in-memory entity is updated only by the winner.
      */
     private Loan transition(Loan loan, List<LoanStatus> expected, Update update) {
-        Query query = Query.query(Criteria.where("_id").is(loan.getId()).and("status").in(expected));
+        return transition(loan, expected, update, null);
+    }
+
+    private Loan transition(Loan loan, List<LoanStatus> expected, Update update, Criteria extra) {
+        Criteria criteria = Criteria.where("_id").is(loan.getId()).and("status").in(expected);
+        if (extra != null) {
+            criteria = new Criteria().andOperator(criteria, extra);
+        }
+        Query query = Query.query(criteria);
         UpdateResult result = mongoTemplate.updateFirst(query, update, Loan.class);
         if (result == null || result.getModifiedCount() == 0) {
             return null;
@@ -609,6 +697,12 @@ public class LoanService {
         if (set.containsKey("returnDate")) loan.setReturnDate((Instant) set.get("returnDate"));
         if (set.containsKey("copyId")) loan.setCopyId((String) set.get("copyId"));
         if (set.containsKey("pickupDeadline")) loan.setPickupDeadline((Instant) set.get("pickupDeadline"));
+        if (set.containsKey("renewalCount")) {
+            loan.setRenewalCount(((Number) set.get("renewalCount")).intValue());
+        }
+        if (set.containsKey("dueReminderSent")) {
+            loan.setDueReminderSent(Boolean.TRUE.equals(set.get("dueReminderSent")));
+        }
     }
 
     private void attachFine(Loan loan, Fine fine) {
@@ -688,6 +782,13 @@ public class LoanService {
         r.setDueDate(loan.getDueDate());
         r.setReturnDate(loan.getReturnDate());
         r.setPickupDeadline(loan.getPickupDeadline());
+        r.setRenewalCount(loan.getRenewalCount());
+        r.setRenewalLimit(app.getMaxRenewals());
+        r.setCanRenew(loan.getStatus() == LoanStatus.ISSUED
+                && loan.getDueDate() != null
+                && Instant.now().isBefore(loan.getDueDate())
+                && loan.getRenewalCount() < app.getMaxRenewals()
+                && waitlistService.countWaiting(loan.getBookId()) == 0);
 
         if (loan.getStatus() == LoanStatus.WAITLISTED) {
             waitlistService.findEntryByLoan(loan.getId()).ifPresent(entry ->

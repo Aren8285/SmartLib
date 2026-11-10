@@ -32,10 +32,11 @@ public class BookController {
             @RequestParam(required = false) String query,
             @RequestParam(required = false) String subject,
             @RequestParam(required = false, name = "availableOnly") Boolean availableOnly,
+            @RequestParam(required = false) String shelf,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "12") int size,
             @RequestParam(defaultValue = "title") String sort) {
-        return bookService.getBooksPage(query, subject, availableOnly, page, size, sort);
+        return bookService.getBooksPage(query, subject, availableOnly, shelf, page, size, sort);
     }
 
     @GetMapping("/subjects")

@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { BookOpen, Clock3, ListOrdered, Map, Sparkles, Star } from 'lucide-react';
+import { BookOpen, Clock3, ListOrdered, Map, Sparkles, Star } from '../components/icons';
 import { useAuth } from '../context/AuthContext';
 import { Alert, Button, Input, PageHeader } from '../components/ui';
 
@@ -58,7 +58,7 @@ export default function Login() {
           <span>SmartLib<span className="brand__sub">University Library</span></span>
         </Link>
         <div>
-          <div className="eyebrow" style={{ color: '#f0c47c' }}>Welcome back</div>
+          <div className="eyebrow" style={{ color: '#e9c18c' }}>Welcome back</div>
           <h1>Your next book is waiting.</h1>
           <p>Sign in to reserve titles, track due dates, pay fines and earn reading points.</p>
           <ul className="auth-aside__features">

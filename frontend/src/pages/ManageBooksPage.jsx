@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { BookOpen, Library, Pencil, Plus, Search, Trash2 } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
+import { BookOpen, Library, Pencil, Plus, Search, SlidersHorizontal, Trash2, X } from '../components/icons';
 import {
   addCopies, createBook, deleteBook, getBooks, getCopies, getShelves, getSubjects,
   updateBook, updateCopyStatus,
@@ -15,10 +16,14 @@ const SIZE = 10;
 
 export default function ManageBooksPage() {
   const toast = useToast();
+  const [params] = useSearchParams();
+  const queryParam = params.get('q') || '';
   const [data, setData] = useState({ items: [], totalItems: 0, totalPages: 1 });
   const [subjects, setSubjects] = useState([]);
   const [shelves, setShelves] = useState([]);
-  const [query, setQuery] = useState('');
+  const [query, setQuery] = useState(queryParam);
+  const [filters, setFilters] = useState({ subject: '', shelf: '', availableOnly: false, sort: 'title' });
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [page, setPage] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -43,11 +48,11 @@ export default function ManageBooksPage() {
   const load = useCallback(() => {
     setLoading(true);
     setError('');
-    getBooks({ query, page, size: SIZE, sort: 'title' })
+    getBooks({ query, ...filters, page, size: SIZE })
       .then((envelope) => setData(envelope?.items ? envelope : { items: envelope || [], totalItems: 0, totalPages: 1 }))
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
-  }, [query, page]);
+  }, [query, filters, page]);
 
   useEffect(() => {
     const timer = setTimeout(load, 250);
@@ -57,6 +62,11 @@ export default function ManageBooksPage() {
     getSubjects().then(setSubjects).catch(() => {});
     getShelves().then(setShelves).catch(() => {});
   }, []);
+  useEffect(() => {
+    if (!queryParam) return;
+    setPage(0);
+    setQuery(queryParam);
+  }, [queryParam]);
 
   const openAdd = () => {
     setEditing(null);
@@ -170,17 +180,25 @@ export default function ManageBooksPage() {
   };
 
   const books = data.items || [];
+  const hasFilters = Boolean(query || filters.subject || filters.shelf || filters.availableOnly);
+  const clearFilters = () => { setQuery(''); setFilters({ subject: '', shelf: '', availableOnly: false, sort: 'title' }); setPage(0); };
 
   return (
     <div className="page">
       <PageHeader
-        eyebrow="Librarian"
-        title="Books & copies"
-        subtitle="Create titles, place them on a shelf and manage every physical copy."
+        eyebrow="Collection desk"
+        title="Keep the shelves legible"
+        subtitle="Find a title, place it on the floor plan, and manage every physical copy from one table."
         actions={<Button icon={Plus} onClick={openAdd}>Add book</Button>}
       />
 
-      <div className="toolbar">
+      <div className="manage-summary">
+        <div><span className="manage-summary__value">{data.totalItems || 0}</span><span className="manage-summary__label">titles in view</span></div>
+        <div><span className="manage-summary__value">{shelves.length}</span><span className="manage-summary__label">shelves on the floor</span></div>
+        <div><span className="manage-summary__value">{books.reduce((sum, book) => sum + (book.totalCopies || 0), 0)}</span><span className="manage-summary__label">copies on this page</span></div>
+      </div>
+
+      <div className="toolbar manage-toolbar">
         <div className="field toolbar__search" style={{ margin: 0 }}>
           <label className="sr-only" htmlFor="manage-search">Search books</label>
           <div style={{ position: 'relative' }}>
@@ -188,9 +206,38 @@ export default function ManageBooksPage() {
             <input id="manage-search" className="input" style={{ paddingLeft: 33 }} placeholder="Search the catalogue…" value={query} onChange={(e) => { setPage(0); setQuery(e.target.value); }} />
           </div>
         </div>
-        <Badge tone="neutral">{data.totalItems || 0} titles</Badge>
         <Badge tone="info"><Library size={12} /> {shelves.length} shelves</Badge>
+        <button type="button" className={`filter-toggle ${filtersOpen ? 'filter-toggle--open' : ''}`} onClick={() => setFiltersOpen((open) => !open)} aria-expanded={filtersOpen}>
+          <SlidersHorizontal size={15} /> Filters
+          {[filters.subject, filters.shelf, filters.availableOnly].filter(Boolean).length > 0 && (
+            <span className="filter-toggle__count">{[filters.subject, filters.shelf, filters.availableOnly].filter(Boolean).length}</span>
+          )}
+        </button>
+        {hasFilters && <Button variant="ghost" size="sm" onClick={clearFilters}><X size={13} /> Clear</Button>}
       </div>
+
+      {filtersOpen && (
+        <div className="catalogue-filters manage-filters">
+          <Select label="Subject" value={filters.subject} onChange={(e) => { setPage(0); setFilters({ ...filters, subject: e.target.value }); }}>
+            <option value="">All subjects</option>
+            {subjects.map((subject) => <option key={subject} value={subject}>{subject}</option>)}
+          </Select>
+          <Select label="Shelf" value={filters.shelf} onChange={(e) => { setPage(0); setFilters({ ...filters, shelf: e.target.value }); }}>
+            <option value="">Any shelf</option>
+            {shelves.map((shelf) => <option key={shelf.id} value={shelf.code}>{shelf.code} — {shelf.section}</option>)}
+          </Select>
+          <Select label="Sort by" value={filters.sort} onChange={(e) => setFilters({ ...filters, sort: e.target.value })}>
+            <option value="title">Title A–Z</option>
+            <option value="author">Author A–Z</option>
+            <option value="newest">Newest first</option>
+            <option value="oldest">Oldest first</option>
+          </Select>
+          <label className="availability-toggle">
+            <input type="checkbox" checked={filters.availableOnly} onChange={(e) => { setPage(0); setFilters({ ...filters, availableOnly: e.target.checked }); }} />
+            <span><strong>Available now</strong><small>Only titles with a free copy</small></span>
+          </label>
+        </div>
+      )}
 
       {error && <Alert tone="error" title="Could not load the catalogue" action={<Button size="sm" variant="secondary" onClick={load}>Retry</Button>}>{error}</Alert>}
 
@@ -199,16 +246,26 @@ export default function ManageBooksPage() {
       ) : (
         <>
           <Table>
-            <thead><tr><th>Title</th><th>Author</th><th>Subject</th><th>Shelf</th><th>Copies</th><th><span className="sr-only">Actions</span></th></tr></thead>
+            <thead><tr><th>Title</th><th>Subject</th><th>Shelf</th><th>Availability</th><th>Queue</th><th><span className="sr-only">Actions</span></th></tr></thead>
             <tbody>
               {books.map((book) => (
                 <React.Fragment key={book.id}>
                   <tr>
-                    <td><strong>{book.title}</strong><div className="cell-detail mono">{book.isbn || 'no ISBN'}</div></td>
-                    <td>{book.author}</td>
+                    <td>
+                      <div className="manage-book-cell">
+                        <span className="mini-spine" aria-hidden="true">{(book.title || '?').replace(/^(the|a|an)\s+/i, '').charAt(0)}</span>
+                        <div><strong>{book.title}</strong><div className="cell-detail">{book.author}</div><div className="cell-detail mono">{book.isbn || 'no ISBN'}</div></div>
+                      </div>
+                    </td>
                     <td><Badge tone="neutral">{book.subject}</Badge></td>
                     <td>{book.shelfCode ? <span className="shelf-tag">{book.shelfCode}</span> : <span className="cell-detail">Unassigned</span>}</td>
-                    <td>{book.availableCopies} available / {book.totalCopies ?? book.availableCopies} total{book.waitlistSize > 0 ? ` · ${book.waitlistSize} queued` : ''}</td>
+                    <td>
+                      <div className="manage-availability">
+                        <StatusBadge status={book.availableCopies > 0 ? 'AVAILABLE' : 'WAITLISTED'} label={book.availableCopies > 0 ? 'On shelf' : 'All out'} />
+                        <span className="cell-detail">{book.availableCopies} of {book.totalCopies ?? book.availableCopies} free</span>
+                      </div>
+                    </td>
+                    <td>{book.waitlistSize > 0 ? <Badge tone="warning">{book.waitlistSize} waiting</Badge> : <span className="cell-detail">—</span>}</td>
                     <td>
                       <div className="row-actions">
                         <Button size="sm" variant="secondary" onClick={() => toggleCopies(book)}>{copiesOf === book.id ? 'Hide copies' : 'Copies'}</Button>

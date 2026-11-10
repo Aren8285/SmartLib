@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { CheckCircle2, PenLine, XCircle } from 'lucide-react';
+import { CheckCircle2, PenLine, XCircle } from '../components/icons';
 import { approveReflection, reflectionsByStatus, rejectReflection } from '../api';
 import { useToast } from '../context/ToastContext';
 import { formatDateTime } from '../utils/format';

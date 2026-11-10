@@ -118,7 +118,7 @@ The seed is idempotent (it checks collection counts). The recommended sequence:
 
 1. First backend deploy with `SPRING_PROFILES_ACTIVE=prod`, `APP_SEED_DEMO=true`.
 2. Wait for startup; check the Render logs for `Seed check complete` and `Demo accounts —`.
-3. Verify `GET /api/shelves` returns 12 and the catalogue returns 30 books.
+3. Verify `GET /api/shelves` returns 12 and the catalogue returns 60 books.
 4. Set `APP_SEED_DEMO=false`, redeploy. Demo data remains; future restarts do not add data.
 5. Demo accounts (password `Password123`):
    - Students: `aarav@`, `diya@`, `kabir@`, `isha@`, `neha@`, `rohan@` `smartlib.test`

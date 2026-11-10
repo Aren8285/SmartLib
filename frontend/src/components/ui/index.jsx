@@ -4,7 +4,7 @@ import {
   AlertCircle, AlertTriangle, BadgeCheck, Ban, BookOpen, CheckCircle2, CircleHelp,
   Clock3, Hourglass, Inbox, Info, ListOrdered, Loader2, Package, PackageCheck,
   PenLine, Wrench, X, XCircle, Wallet, ChevronLeft, ChevronRight,
-} from 'lucide-react';
+} from '../icons';
 
 /* ───────────────────────────── Button ───────────────────────────── */
 export function Button({

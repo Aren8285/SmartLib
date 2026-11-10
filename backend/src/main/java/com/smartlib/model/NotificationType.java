@@ -5,6 +5,7 @@ public enum NotificationType {
     EXPIRED,
     PICKUP_REMINDER,
     ISSUED,
+    RENEWED,
     DUE_REMINDER,
     OVERDUE,
     FINE_IMPOSED,

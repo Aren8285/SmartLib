@@ -108,7 +108,7 @@ position is required; capacity cannot be lower than the current book count.
 | POST | `/api/books/{id}/copies` | LIBRARIAN | `{count, condition}` add copies |
 | PATCH | `/api/copies/{id}/status` | LIBRARIAN | `{status: AVAILABLE\|DAMAGED\|LOST}` |
 
-Catalogue query parameters: `query`, `subject`, `availableOnly`, `page` (0-based), `size` (1–100,
+Catalogue query parameters: `query` (title/author/subject/ISBN), `subject`, `shelf` (shelf code), `availableOnly`, `page` (0-based), `size` (1–100,
 default 12), `sort` (`title` default, `author`, `newest`). Response:
 
 ```json
@@ -140,11 +140,14 @@ non-terminal loans exist.
 | POST | `/api/loans/{id}/return` | LIBRARIAN | `{bookCondition: "GOOD"\|"DAMAGED"}` optional |
 | POST | `/api/loans/{id}/lost` | LIBRARIAN | Lost-book fine; copy not released |
 | POST | `/api/loans/{id}/cancel` | STUDENT | While WAITLISTED or READY_FOR_PICKUP |
+| POST | `/api/loans/{id}/renew` | STUDENT | Extend an owned ISSUED loan by the standard loan period |
 | POST | `/api/loans/{id}/skip-reflection` | STUDENT | Close without points |
 
 `GET /api/loans` parameters: `studentId` (`me` resolves to the token principal; librarians may pass an
-id), `status` (comma-separated enum list, e.g. `ISSUED,OVERDUE`), `page`, `size`. Loans are sorted by
-`requestDate` descending and return the standard page envelope.
+id), `status` (comma-separated enum list, e.g. `ISSUED,OVERDUE`), `page`, `size`, and librarian-only
+`q`. Desk lookup `q` matches student name/email, book title/author/subject/ISBN, or copy ID; it applies
+when no `studentId` is given. Loans are sorted by `requestDate` descending and return the standard page
+envelope.
 
 Loan response (main fields):
 
@@ -154,9 +157,15 @@ Loan response (main fields):
   "bookId": "…", "bookTitle": "Clean Code", "copyId": "…",
   "status": "ISSUED", "requestDate": "…", "issueDate": "…", "dueDate": "…",
   "returnDate": null, "pickupDeadline": null, "queuePosition": null,
-  "accruedFine": null, "fine": null, "message": "Issued. Due back by Nov 20, 14:00."
+  "accruedFine": null, "fine": null, "renewalCount": 0, "renewalLimit": 2,
+  "canRenew": true, "message": "Issued. Due back by Nov 20, 14:00."
 }
 ```
+
+**Renewal:** a student may renew their own ISSUED loan at most twice. Each renewal adds the standard loan
+period to `dueDate`, resets the due reminder and creates a `RENEWED` notification. Renewal returns **409**
+when the loan is overdue, the limit is reached, or a student is waiting for the book; `canRenew` reflects
+these checks for display.
 
 **Double actions:** issue/return/lost/cancel/pay/approve use conditional status updates. If another
 request already changed the state, the second call returns **409** and does not repeat points/fines.
@@ -207,9 +216,9 @@ Reflection content is trimmed, 50–2000 characters; one per loan. `reviewNote` 
 | GET | `/api/dashboard/librarian` | readyForPickup, issued, overdue, pendingReflections, pendingFines, totalBooks, totalCopies, copiesByStatus, oldestActionsNeeded |
 | GET | `/api/leaderboard?limit=10` | Top students by points; `{rank, studentId, name, points}` |
 
-Notification types include promotion, expiry, overdue, issued, pickup/due reminders, fine imposed/paid,
-and reflection pending/approved/rejected. The bell polls every 30 seconds. The leaderboard intentionally
-excludes email addresses.
+Notification types include promotion, expiry, overdue, issued, renewal, pickup/due reminders, fine
+imposed/paid, and reflection pending/approved/rejected. The bell polls every 30 seconds. The leaderboard
+intentionally excludes email addresses.
 
 ---
 

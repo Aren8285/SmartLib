@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Receipt, Wallet } from 'lucide-react';
+import { Receipt, Wallet } from '../components/icons';
 import { getFinesByStatus } from '../api';
 import { formatDateTime, money } from '../utils/format';
 import {

@@ -1,10 +1,11 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { ClipboardList, RotateCcw } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
+import { ClipboardList, RotateCcw, Search, X } from '../components/icons';
 import { getLoans, issueLoan, lostLoan, returnLoan } from '../api';
 import { useToast } from '../context/ToastContext';
 import { formatDateTime, money } from '../utils/format';
 import {
-  Alert, Button, Card, ConfirmDialog, EmptyState, Modal, PageHeader, Pagination,
+  Alert, Badge, Button, Card, ConfirmDialog, EmptyState, Modal, PageHeader, Pagination,
   Select, SkeletonTable, StatusBadge, Table,
 } from '../components/ui';
 import Countdown from '../components/Countdown';
@@ -14,6 +15,10 @@ const SIZE = 8;
 
 export default function CirculationPage() {
   const toast = useToast();
+  const [params] = useSearchParams();
+  const queryParam = params.get('q') || '';
+  const [deskQuery, setDeskQuery] = useState(queryParam);
+  const [searchTerm, setSearchTerm] = useState(queryParam.trim());
   const [ready, setReady] = useState({ items: [], totalItems: 0, totalPages: 1 });
   const [active, setActive] = useState({ items: [], totalItems: 0, totalPages: 1 });
   const [readyPage, setReadyPage] = useState(0);
@@ -29,8 +34,8 @@ export default function CirculationPage() {
     setLoading(true);
     setError('');
     Promise.all([
-      getLoans({ status: 'READY_FOR_PICKUP', page: readyPage, size: SIZE }),
-      getLoans({ status: 'ISSUED,OVERDUE', page: activePage, size: SIZE }),
+      getLoans({ status: 'READY_FOR_PICKUP', q: searchTerm, page: readyPage, size: SIZE }),
+      getLoans({ status: 'ISSUED,OVERDUE', q: searchTerm, page: activePage, size: SIZE }),
     ])
       .then(([readyEnvelope, activeEnvelope]) => {
         setReady(readyEnvelope);
@@ -38,9 +43,24 @@ export default function CirculationPage() {
       })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
-  }, [readyPage, activePage]);
+  }, [readyPage, activePage, searchTerm]);
 
   useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    setDeskQuery(queryParam);
+  }, [queryParam]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      const next = deskQuery.trim();
+      if (next === searchTerm) return;
+      setReadyPage(0);
+      setActivePage(0);
+      setSearchTerm(next);
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [deskQuery, searchTerm]);
 
   const doIssue = async (loan) => {
     setBusy(loan.id);
@@ -96,12 +116,42 @@ export default function CirculationPage() {
 
       {error && <Alert tone="error" title="Could not load circulation" action={<Button size="sm" variant="secondary" onClick={load}>Retry</Button>}>{error}</Alert>}
 
+      <section className="desk-lookup" aria-label="Desk lookup">
+        <div className="desk-lookup__head">
+          <div>
+            <span className="desk-lookup__eyebrow">Desk lookup</span>
+            <p>Find a pickup or active loan by student, book, ISBN or copy ID.</p>
+          </div>
+          {searchTerm && <Badge tone="info">Filtered</Badge>}
+        </div>
+        <div className="catalogue-search">
+          <Search size={17} aria-hidden="true" />
+          <label className="sr-only" htmlFor="desk-search">Search circulation</label>
+          <input
+            id="desk-search"
+            className="input"
+            placeholder="Name, title, ISBN or copy ID…"
+            value={deskQuery}
+            onChange={(e) => setDeskQuery(e.target.value)}
+          />
+          {deskQuery && (
+            <button type="button" className="catalogue-search__clear" onClick={() => setDeskQuery('')} aria-label="Clear desk search">
+              <X size={15} />
+            </button>
+          )}
+        </div>
+      </section>
+
       <Card
         title={`Ready for pickup (${ready.totalItems ?? (ready.items || []).length})`}
         subtitle="Reserved copies waiting at the desk; the countdown turns red under 6 hours."
       >
         {loading ? <SkeletonTable rows={3} columns={5} /> : (ready.items || []).length === 0 ? (
-          <EmptyState icon={ClipboardList} title="No copies waiting for pickup" description="Reservations appear here as soon as a copy is held for a student." />
+          <EmptyState
+            icon={ClipboardList}
+            title={searchTerm ? 'No matching pickups' : 'No copies waiting for pickup'}
+            description={searchTerm ? `Nothing waiting for pickup matches “${searchTerm}”. Clear the search to see every hold.` : 'Reservations appear here as soon as a copy is held for a student.'}
+          />
         ) : (
           <>
             <Table>
@@ -128,7 +178,11 @@ export default function CirculationPage() {
         subtitle="Returns release the copy to the next student in the queue."
       >
         {loading ? <SkeletonTable rows={4} columns={6} /> : (active.items || []).length === 0 ? (
-          <EmptyState icon={ClipboardList} title="No books are out right now" />
+          <EmptyState
+            icon={ClipboardList}
+            title={searchTerm ? 'No matching active loans' : 'No books are out right now'}
+            description={searchTerm ? `No issued or overdue loan matches “${searchTerm}”.` : undefined}
+          />
         ) : (
           <>
             <Table>

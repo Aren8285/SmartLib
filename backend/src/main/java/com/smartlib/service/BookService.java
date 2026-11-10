@@ -57,6 +57,7 @@ public class BookService {
      * page envelope so the frontend never has to load the whole library.
      */
     public PageResponse<BookResponse> getBooksPage(String query, String subject, Boolean availableOnly,
+                                                   String shelfCode,
                                                    int page, int size, String sort) {
         int p = Math.max(0, page);
         int s = Math.max(1, Math.min(100, size));
@@ -67,10 +68,18 @@ public class BookService {
             filters.add(new Criteria().orOperator(
                     Criteria.where("title").regex(escaped, "i"),
                     Criteria.where("author").regex(escaped, "i"),
-                    Criteria.where("subject").regex(escaped, "i")));
+                    Criteria.where("subject").regex(escaped, "i"),
+                    Criteria.where("isbn").regex(escaped, "i")));
         }
         if (StringUtils.hasText(subject)) {
             filters.add(Criteria.where("subject").is(subject));
+        }
+        if (StringUtils.hasText(shelfCode)) {
+            Shelf shelf = shelfRepository.findByCode(shelfCode.trim()).orElse(null);
+            if (shelf == null) {
+                return PageResponse.of(List.of(), p, s, 0);
+            }
+            filters.add(Criteria.where("shelfId").is(shelf.getId()));
         }
         if (Boolean.TRUE.equals(availableOnly)) {
             List<String> availableBookIds = mongoTemplate.findDistinct(

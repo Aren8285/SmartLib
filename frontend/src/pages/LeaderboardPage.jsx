@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Crown, Medal, Star, Trophy } from 'lucide-react';
+import { Crown, Medal, Star, Trophy } from '../components/icons';
 import { getLeaderboard } from '../api';
 import { useAuth } from '../context/AuthContext';
 import { Alert, Button, EmptyState, PageHeader, SkeletonTable, Table } from '../components/ui';
@@ -20,7 +20,7 @@ export default function LeaderboardPage() {
   useEffect(() => { load(); }, [load]);
 
   const top = rows.slice(0, 10);
-  const myIndex = rows.findIndex((r) => r.name === user?.name);
+  const myIndex = rows.findIndex((r) => r.studentId === user?.id || r.name === user?.name);
   const me = myIndex >= 0 ? { ...rows[myIndex], rank: myIndex + 1 } : null;
   const inTop = me && me.rank <= 10;
 
@@ -58,10 +58,10 @@ export default function LeaderboardPage() {
           <thead><tr><th>Rank</th><th>Student</th><th>Points</th></tr></thead>
           <tbody>
             {top.map((row, index) => {
-              const isMe = row.name === user?.name;
+              const isMe = row.studentId === user?.id || row.name === user?.name;
               return (
                 <tr key={`${row.name}-${index}`} style={isMe ? { background: 'var(--brand-soft)' } : undefined}>
-                  <td><span className="row" style={{ gap: 6 }}>{iconFor(index + 1)} {index === 0 && <Crown size={0} aria-hidden="true" />}</span></td>
+                  <td><span className="row" style={{ gap: 6 }}>{iconFor(index + 1)}</span></td>
                   <td>
                     <strong>{row.name}</strong>
                     {isMe && <span className="badge badge--brand" style={{ marginLeft: 8 }}>You</span>}

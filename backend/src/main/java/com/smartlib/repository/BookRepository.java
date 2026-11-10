@@ -17,7 +17,8 @@ public interface BookRepository extends MongoRepository<Book, String> {
     @Query("{ '$or': [ " +
            "{ 'title': { '$regex': ?0, '$options': 'i' } }, " +
            "{ 'author': { '$regex': ?0, '$options': 'i' } }, " +
-           "{ 'subject': { '$regex': ?0, '$options': 'i' } } " +
+           "{ 'subject': { '$regex': ?0, '$options': 'i' } }, " +
+           "{ 'isbn': { '$regex': ?0, '$options': 'i' } } " +
            "] }")
     List<Book> searchByQuery(String query);
 }

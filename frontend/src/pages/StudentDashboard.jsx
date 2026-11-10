@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { BookMarked, Clock3, Compass, Sparkles, Star, Wallet } from 'lucide-react';
+import { BookMarked, Clock3, Compass, Sparkles, Star, Wallet } from '../components/icons';
 import { getRecommendations, requestLoan, studentDashboard } from '../api';
 import { useToast } from '../context/ToastContext';
-import { relativeTime, formatDateTime, initials } from '../utils/format';
+import { relativeTime, formatDateTime } from '../utils/format';
+import { coverMark, coverTone } from '../utils/bookDisplay';
 import {
   Alert, Badge, Button, Card, EmptyState, PageHeader, Skeleton, StatCard, StatusBadge,
 } from '../components/ui';
@@ -141,7 +142,11 @@ export default function StudentDashboard() {
             {recs.map(({ book, reason }) => (
               <article className="book-card" key={book.id}>
                 <div className="book-card__top">
-                  <span className="book-cover book-cover--amber" aria-hidden="true">{initials(book.title)}</span>
+                  <span className={`book-cover ${coverTone(book.subject)}`} aria-hidden="true">
+                    <span className="book-cover__mark">{coverMark(book.title)}</span>
+                    <span className="book-cover__rule" />
+                    <span className="book-cover__subject">{book.subject}</span>
+                  </span>
                   <div>
                     <h3>{book.title}</h3>
                     <div className="book-card__author">{book.author}</div>

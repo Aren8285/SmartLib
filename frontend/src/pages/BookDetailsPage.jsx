@@ -1,9 +1,9 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { ArrowLeft, MapPin } from 'lucide-react';
+import { ArrowLeft, MapPin } from '../components/icons';
 import { getBook, requestLoan } from '../api';
 import { useToast } from '../context/ToastContext';
-import { initials } from '../utils/format';
+import { coverMark, coverTone } from '../utils/bookDisplay';
 import {
   Alert, Badge, Button, Card, EmptyState, PageHeader, Skeleton, StatusBadge,
 } from '../components/ui';
@@ -81,7 +81,11 @@ export default function BookDetailsPage() {
       <div className="reports-grid">
         <Card>
           <div className="book-detail">
-            <span className="book-cover book-cover--amber" aria-hidden="true">{initials(book.title)}</span>
+            <span className={`book-cover ${coverTone(book.subject)}`} aria-hidden="true">
+              <span className="book-cover__mark">{coverMark(book.title)}</span>
+              <span className="book-cover__rule" />
+              <span className="book-cover__subject">{book.subject}</span>
+            </span>
             <div>
               <StatusBadge status={book.availableCopies > 0 ? 'AVAILABLE' : 'WAITLISTED'} label={book.availableCopies > 0 ? 'On the shelf' : 'All copies out'} />
               <p style={{ color: 'var(--muted)', marginTop: 10, fontSize: '0.86rem' }}>

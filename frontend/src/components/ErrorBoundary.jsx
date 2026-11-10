@@ -1,5 +1,5 @@
 import React from 'react';
-import { AlertTriangle, RotateCcw } from 'lucide-react';
+import { AlertTriangle, RotateCcw } from './icons';
 
 /** Global render-error boundary: a crash in one page never blanks the app. */
 export default class ErrorBoundary extends React.Component {

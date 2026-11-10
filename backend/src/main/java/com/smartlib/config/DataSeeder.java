@@ -25,7 +25,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Demo data: 12 shelves in a 4x3 floor grid, 30 books across 6 subjects,
+ * Demo data: 12 shelves in a 4x3 floor grid, 60 books across 6 subjects,
  * 6 students + 2 librarians, and enough historical loans to make every
  * dashboard and report meaningful on first run. Seeding is automatic in dev
  * and gated by APP_SEED_DEMO in production.
@@ -178,7 +178,7 @@ public class DataSeeder implements CommandLineRunner {
     // ─────────── books & copies ───────────
 
     private void seedBooksAndCopies() {
-        log.info("Seeding 30 books and their copies...");
+        log.info("Seeding 60 books and their copies...");
         // Computer Science
         book("cs1", "Introduction to Algorithms", "Cormen, Leiserson, Rivest, Stein",
                 "Computer Science", "9780262046305", 2);
@@ -190,6 +190,14 @@ public class DataSeeder implements CommandLineRunner {
         book("cs5", "Refactoring", "Martin Fowler", "Computer Science", "9780134757599", 2);
         book("cs6", "The Mythical Man-Month", "Frederick P. Brooks Jr.",
                 "Computer Science", "9780201835953", 2);
+        book("cs7", "Structure and Interpretation of Computer Programs", "Harold Abelson, Gerald Jay Sussman",
+                "Computer Science", "9780262510875", 3);
+        book("cs8", "Computer Networks", "Andrew S. Tanenbaum, David J. Wetherall",
+                "Computer Science", "9780132126953", 2);
+        book("cs9", "Operating System Concepts", "Abraham Silberschatz, Peter B. Galvin, Greg Gagne",
+                "Computer Science", "9781118063330", 2);
+        book("cs10", "Artificial Intelligence: A Modern Approach", "Stuart Russell, Peter Norvig",
+                "Computer Science", "9780136042594", 3);
         // Mathematics
         book("math1", "Calculus: Early Transcendentals", "James Stewart",
                 "Mathematics", "9781285741550", 2);
@@ -201,21 +209,47 @@ public class DataSeeder implements CommandLineRunner {
                 "Mathematics", "9781886529236", 2);
         book("math5", "Concrete Mathematics", "Graham, Knuth, Patashnik",
                 "Mathematics", "9780201558029", 1);
+        book("math6", "Introduction to Linear Algebra", "Gilbert Strang",
+                "Mathematics", "9780980232776", 2);
+        book("math7", "Calculus, Vol. 1", "Tom M. Apostol",
+                "Mathematics", "9780471000051", 2);
+        book("math8", "A First Course in Probability", "Sheldon Ross",
+                "Mathematics", "9780321815781", 2);
+        book("math9", "Numerical Analysis", "Richard L. Burden, J. Douglas Faires",
+                "Mathematics", "9781305253667", 1);
+        book("math10", "Graph Theory", "Reinhard Diestel",
+                "Mathematics", "9783662536216", 1);
         // Physics
         book("phy1", "University Physics", "Hugh Young, Roger Freedman",
                 "Physics", "9780321973610", 2);
-        book("phy2", "Concepts of Physics", "H.C. Verma", "Physics", "9789353435515", 2);
+        book("phy2", "Concepts of Physics", "H.C. Verma", "Physics", "9788177091878", 2);
         book("phy3", "The Feynman Lectures on Physics", "Richard Feynman",
                 "Physics", "9780465023820", 2);
         book("phy4", "Six Easy Pieces", "Richard Feynman", "Physics", "9780465025275", 2);
         book("phy5", "Astrophysics for People in a Hurry", "Neil deGrasse Tyson",
                 "Physics", "9780393609394", 2);
+        book("phy6", "Classical Mechanics", "Herbert Goldstein",
+                "Physics", "9780201657029", 2);
+        book("phy7", "Introduction to Quantum Mechanics", "David J. Griffiths",
+                "Physics", "9781107189638", 3);
+        book("phy8", "Thermodynamics and Statistical Mechanics", "Walter Greiner, Ludwig Neise, Horst Stöcker",
+                "Physics", "9780387942698", 1);
+        book("phy9", "Introduction to Electrodynamics", "David J. Griffiths",
+                "Physics", "9781108420419", 2);
+        book("phy10", "The Theoretical Minimum", "Leonard Susskind, George Hrabovsky",
+                "Physics", "9780465075683", 2);
         // Literature
         book("lit1", "To Kill a Mockingbird", "Harper Lee", "Literature", "9780061120084", 2);
         book("lit2", "1984", "George Orwell", "Literature", "9780451524935", 2);
         book("lit3", "The Great Gatsby", "F. Scott Fitzgerald", "Literature", "9780743273565", 2);
         book("lit4", "Pride and Prejudice", "Jane Austen", "Literature", "9780141439518", 2);
         book("lit5", "The Catcher in the Rye", "J.D. Salinger", "Literature", "9780316769488", 2);
+        book("lit6", "One Hundred Years of Solitude", "Gabriel García Márquez",
+                "Literature", "9780060883287", 2);
+        book("lit7", "Beloved", "Toni Morrison", "Literature", "9781400033416", 2);
+        book("lit8", "The Remains of the Day", "Kazuo Ishiguro", "Literature", "9780679731726", 2);
+        book("lit9", "Things Fall Apart", "Chinua Achebe", "Literature", "9780385474542", 2);
+        book("lit10", "Midnight's Children", "Salman Rushdie", "Literature", "9780099578512", 1);
         // History
         book("his1", "A People's History of the United States", "Howard Zinn",
                 "History", "9780060838652", 2);
@@ -224,6 +258,13 @@ public class DataSeeder implements CommandLineRunner {
         book("his3", "Guns, Germs, and Steel", "Jared Diamond", "History", "9780393317558", 2);
         book("his4", "The Silk Roads", "Peter Frankopan", "History", "9781101912379", 1);
         book("his5", "SPQR: A History of Ancient Rome", "Mary Beard", "History", "9781846683800", 2);
+        book("his6", "The Discovery of India", "Jawaharlal Nehru", "History", "9780143031031", 2);
+        book("his7", "Postwar: A History of Europe Since 1945", "Tony Judt",
+                "History", "9780143037750", 2);
+        book("his8", "The Making of the English Working Class", "E. P. Thompson",
+                "History", "9780394703220", 1);
+        book("his9", "India After Gandhi", "Ramachandra Guha", "History", "9780060958589", 2);
+        book("his10", "The Warmth of Other Suns", "Isabel Wilkerson", "History", "9780679763888", 2);
         // Economics
         book("eco1", "An Inquiry into the Nature and Causes of the Wealth of Nations",
                 "Adam Smith", "Economics", "9780553585971", 2);
@@ -231,6 +272,14 @@ public class DataSeeder implements CommandLineRunner {
                 "Economics", "9780060731328", 2);
         book("eco3", "Thinking, Fast and Slow", "Daniel Kahneman", "Economics", "9780374533557", 2);
         book("eco4", "The Undercover Economist", "Tim Harford", "Economics", "9780199926510", 2);
+        book("eco5", "Capital in the Twenty-First Century", "Thomas Piketty",
+                "Economics", "9780674430006", 2);
+        book("eco6", "Poor Economics", "Abhijit V. Banerjee, Esther Duflo",
+                "Economics", "9781610390934", 2);
+        book("eco7", "The Big Short", "Michael Lewis", "Economics", "9780393351590", 2);
+        book("eco8", "Macroeconomics", "Olivier Blanchard", "Economics", "9780133780567", 2);
+        book("eco9", "Intermediate Microeconomics", "Hal R. Varian", "Economics", "9780393689860", 2);
+        book("eco10", "Development as Freedom", "Amartya Sen", "Economics", "9780385720274", 2);
 
         log.info("Books and copies seeded.");
     }

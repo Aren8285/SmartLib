@@ -1,8 +1,8 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { BookMarked } from 'lucide-react';
+import { BookMarked } from '../components/icons';
 import {
-  cancelLoan, getMyLoans, myReflections, skipReflection, submitReflection,
+  cancelLoan, getMyLoans, myReflections, renewLoan, skipReflection, submitReflection,
 } from '../api';
 import { useToast } from '../context/ToastContext';
 import { formatDate, formatDateTime, relativeTime } from '../utils/format';
@@ -123,6 +123,19 @@ export default function MyLoansPage() {
     }
   };
 
+  const doRenew = async (loan) => {
+    setBusy(`renew-${loan.id}`);
+    try {
+      const res = await renewLoan(loan.id);
+      toast.success(res.message || 'Loan renewed.');
+      load();
+    } catch (e) {
+      toast.error(e.message);
+    } finally {
+      setBusy('');
+    }
+  };
+
   const loans = data.items || [];
 
   return (
@@ -182,6 +195,9 @@ export default function MyLoansPage() {
                         {loan.status === 'WAITLISTED' && loan.queuePosition != null && (
                           <span className="text-muted">Queue position #{loan.queuePosition}</span>
                         )}
+                        {loan.status === 'ISSUED' && loan.renewalCount > 0 && (
+                          <span className="cell-detail">Renewed {loan.renewalCount}/{loan.renewalLimit}</span>
+                        )}
                         {reflection && (
                           <div className="row" style={{ gap: 4 }}>
                             <StatusBadge status={reflection.status} label={`Reflection ${reflection.status.toLowerCase()}`} />
@@ -193,6 +209,16 @@ export default function MyLoansPage() {
                       <td>
                         <div className="row-actions">
                           {cancelable && <Button size="sm" variant="danger" onClick={() => setConfirm(loan)}>Cancel</Button>}
+                          {loan.status === 'ISSUED' && loan.canRenew && (
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              loading={busy === `renew-${loan.id}`}
+                              onClick={() => doRenew(loan)}
+                            >
+                              Renew
+                            </Button>
+                          )}
                           {loan.status === 'REFLECTION_PENDING' && !reflection && (
                             <Button
                               size="sm"

@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   AlertTriangle, BarChart3, BookOpen, ClipboardList, Clock3, PenLine, Wallet,
-} from 'lucide-react';
+} from '../components/icons';
 import { librarianDashboard } from '../api';
 import { formatDateTime } from '../utils/format';
 import {

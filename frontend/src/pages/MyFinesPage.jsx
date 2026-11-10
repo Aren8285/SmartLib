@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Receipt, Wallet } from 'lucide-react';
+import { Receipt, Wallet } from '../components/icons';
 import { getMyFines, payFine } from '../api';
 import { useToast } from '../context/ToastContext';
 import { formatDateTime, money } from '../utils/format';

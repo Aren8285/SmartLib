@@ -13,6 +13,7 @@ public class AppProperties {
     private int lostBookFine = 500;
     private int onTimeReturnPoints = 10;
     private int maxActiveLoans = 3;
+    private int maxRenewals = 2;
     private int maxWaitlistEntries = 5;
 
     // Iteration 3

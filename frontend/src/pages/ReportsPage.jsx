@@ -3,7 +3,7 @@ import {
   Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieChart,
   ResponsiveContainer, Tooltip as ChartTooltip, XAxis, YAxis,
 } from 'recharts';
-import { BarChart3, Download, RefreshCw, Wallet } from 'lucide-react';
+import { BarChart3, Download, RefreshCw, Wallet } from '../components/icons';
 import {
   downloadReportCsv, getCirculation, getFinesReport, getInventoryReport, getLeaderboard,
   getOverdueReport, getPopularBooks, getWaitlistReport,
@@ -14,7 +14,7 @@ import {
   Alert, Badge, Button, Card, EmptyState, PageHeader, Skeleton, StatCard, Table,
 } from '../components/ui';
 
-const COLORS = ['#2f5d8a', '#b9791a', '#5c7c5a', '#a3543f', '#75536b', '#3f7373'];
+const COLORS = ['#365663', '#b47a38', '#4f7862', '#9a4a3f', '#75536b', '#3f7373'];
 const DAY = 86_400_000;
 
 function isoDate(date) {
@@ -153,8 +153,8 @@ export default function ReportsPage() {
                   <YAxis allowDecimals={false} />
                   <ChartTooltip />
                   <Legend />
-                  <Line type="monotone" dataKey="issued" name="Issued" stroke="#2f5d8a" strokeWidth={2} dot={false} />
-                  <Line type="monotone" dataKey="returned" name="Returned" stroke="#b9791a" strokeWidth={2} dot={false} />
+                  <Line type="monotone" dataKey="issued" name="Issued" stroke="#365663" strokeWidth={2} dot={false} />
+                  <Line type="monotone" dataKey="returned" name="Returned" stroke="#b47a38" strokeWidth={2} dot={false} />
                 </LineChart>
               </ResponsiveContainer>
             </div>
@@ -174,7 +174,7 @@ export default function ReportsPage() {
                   <XAxis type="number" allowDecimals={false} />
                   <YAxis type="category" dataKey="title" width={120} tick={{ fontSize: 10 }} />
                   <ChartTooltip />
-                  <Bar dataKey="borrowCount" name="Borrows" fill="#b9791a" radius={[0, 4, 4, 0]} />
+                  <Bar dataKey="borrowCount" name="Borrows" fill="#b47a38" radius={[0, 4, 4, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </div>

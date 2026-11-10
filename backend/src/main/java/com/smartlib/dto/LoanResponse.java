@@ -22,6 +22,9 @@ public class LoanResponse {
     private Integer queuePosition;
     private Double accruedFine;
     private FineDto fine;
+    private int renewalCount;
+    private int renewalLimit;
+    private boolean canRenew;
     private String message;
 }
 

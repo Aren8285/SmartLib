@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Bell } from 'lucide-react';
+import { Bell } from './icons';
 import {
   getNotifications, unreadCount, markNotificationRead, markAllNotificationsRead,
 } from '../api';

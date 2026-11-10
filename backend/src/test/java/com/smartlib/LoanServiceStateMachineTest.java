@@ -13,8 +13,10 @@ import com.smartlib.service.LoanService;
 import com.smartlib.service.NotificationService;
 import com.smartlib.service.WaitlistService;
 import com.mongodb.client.result.UpdateResult;
+import org.bson.Document;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.data.mongodb.core.FindAndModifyOptions;
 import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.data.mongodb.core.query.Query;
@@ -503,6 +505,87 @@ class LoanServiceStateMachineTest {
     }
 
     // ── SCHEDULED JOBS ──
+
+    // ── RENEWAL ──
+
+    @Test
+    void renewLoan_extendsDueDateAndNotifiesStudent() {
+        Loan loan = Loan.builder().id("loan1").studentId("student1").bookId("book1")
+                .copyId("copy1").status(LoanStatus.ISSUED)
+                .dueDate(Instant.now().plus(2, ChronoUnit.DAYS)).renewalCount(0).build();
+        when(loanRepository.findById("loan1")).thenReturn(Optional.of(loan));
+        when(waitlistService.countWaiting("book1")).thenReturn(0L);
+        when(userRepository.findById("student1")).thenReturn(Optional.of(student));
+        when(bookRepository.findById("book1")).thenReturn(Optional.of(book));
+
+        LoanResponse response = loanService.renewLoan("loan1", "student1");
+
+        assertThat(response.getDueDate()).isAfter(Instant.now().plus(15, ChronoUnit.DAYS));
+        assertThat(response.getRenewalCount()).isEqualTo(1);
+        assertThat(response.isCanRenew()).isTrue();
+        assertThat(response.getMessage()).contains("Renewed");
+        verify(notificationService).create(eq("student1"), eq(NotificationType.RENEWED),
+                eq("Loan renewed"), anyString(), eq("loan1"));
+    }
+
+    @Test
+    void renewLoan_losingConcurrentRenewalIsRejectedWithoutNotifying() {
+        Loan loan = Loan.builder().id("loan1").studentId("student1").bookId("book1")
+                .status(LoanStatus.ISSUED).dueDate(Instant.now().plus(2, ChronoUnit.DAYS))
+                .renewalCount(0).build();
+        when(loanRepository.findById("loan1")).thenReturn(Optional.of(loan));
+        when(waitlistService.countWaiting("book1")).thenReturn(0L);
+        when(mongoTemplate.updateFirst(any(Query.class), any(Update.class), eq(Loan.class)))
+                .thenReturn(UpdateResult.acknowledged(0L, 0L, null));
+
+        assertThatThrownBy(() -> loanService.renewLoan("loan1", "student1"))
+                .isInstanceOf(BusinessRuleException.class)
+                .hasMessageContaining("already renewed");
+
+        ArgumentCaptor<Query> query = ArgumentCaptor.forClass(Query.class);
+        verify(mongoTemplate).updateFirst(query.capture(), any(Update.class), eq(Loan.class));
+        List<?> clauses = (List<?>) query.getValue().getQueryObject().get("$and");
+        assertThat(clauses).hasSize(2);
+        assertThat(((Document) clauses.get(1)).keySet()).contains("$or");
+        verify(notificationService, never()).create(anyString(), any(), anyString(), anyString(), anyString());
+    }
+
+    @Test
+    void renewLoan_waitlistedBookIsRejected() {
+        Loan loan = Loan.builder().id("loan1").studentId("student1").bookId("book1")
+                .status(LoanStatus.ISSUED).dueDate(Instant.now().plus(2, ChronoUnit.DAYS)).build();
+        when(loanRepository.findById("loan1")).thenReturn(Optional.of(loan));
+        when(waitlistService.countWaiting("book1")).thenReturn(1L);
+
+        assertThatThrownBy(() -> loanService.renewLoan("loan1", "student1"))
+                .isInstanceOf(BusinessRuleException.class)
+                .hasMessageContaining("Another student is waiting");
+        verify(mongoTemplate, never()).updateFirst(any(Query.class), any(Update.class), eq(Loan.class));
+    }
+
+    @Test
+    void renewLoan_renewalLimitIsEnforced() {
+        Loan loan = Loan.builder().id("loan1").studentId("student1").bookId("book1")
+                .status(LoanStatus.ISSUED).dueDate(Instant.now().plus(2, ChronoUnit.DAYS))
+                .renewalCount(app.getMaxRenewals()).build();
+        when(loanRepository.findById("loan1")).thenReturn(Optional.of(loan));
+        when(waitlistService.countWaiting("book1")).thenReturn(0L);
+
+        assertThatThrownBy(() -> loanService.renewLoan("loan1", "student1"))
+                .isInstanceOf(BusinessRuleException.class)
+                .hasMessageContaining("Renewal limit reached");
+    }
+
+    @Test
+    void renewLoan_overdueOrPastDueIsRejected() {
+        Loan loan = Loan.builder().id("loan1").studentId("student1").bookId("book1")
+                .status(LoanStatus.ISSUED).dueDate(Instant.now().minus(1, ChronoUnit.HOURS)).build();
+        when(loanRepository.findById("loan1")).thenReturn(Optional.of(loan));
+
+        assertThatThrownBy(() -> loanService.renewLoan("loan1", "student1"))
+                .isInstanceOf(BusinessRuleException.class)
+                .hasMessageContaining("Overdue loans cannot be renewed");
+    }
 
     @Test
     void runPickupExpiryJob_expiresLoanReleasesCopyAndNotifiesStudent() {

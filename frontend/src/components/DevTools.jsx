@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { FlaskConical, Play, ShieldCheck, Wrench } from 'lucide-react';
+import { FlaskConical, Play, ShieldCheck, Wrench } from './icons';
 import { devInvariants, devRepair, devRunJobs, devSetDueDate, devSetPickupDeadline } from '../api';
 import { Button, Select, Input } from './ui';
 

@@ -44,6 +44,10 @@ public class Loan {
     /** One-time due-date reminder flag (used when the due date is < 24h away). */
     private boolean dueReminderSent;
 
+    /** Number of self-service renewals already used for this loan. */
+    @Builder.Default
+    private int renewalCount = 0;
+
     /** Nullable; set when a fine (late return / lost / damaged book) is attached to the loan. */
     private String fineId;
 }

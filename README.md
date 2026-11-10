@@ -1,8 +1,8 @@
 # SmartLib — University Library Management System
 
-> **Iteration 4 (final)** — a demo-ready, submission-ready library platform with a visual shelf map,
-> librarian reports, a shared design system, concurrency/edge-case hardening, production configuration,
-> and a tested full loan lifecycle.
+> **Iteration 4 (final)** — a demo-ready, submission-ready library platform with a visual shelf map and
+> walking route, self-service renewals, a keyboard quick-find palette, librarian reports, a shared design
+> system, concurrency/edge-case hardening, production configuration, and a tested full loan lifecycle.
 
 SmartLib is a full-stack university library app. Students search the catalogue, locate physical books on
 a floor map, request copies, join FIFO waitlists, pay fines, submit reading reflections and earn points.
@@ -14,25 +14,34 @@ reports.
 ## 1. Feature overview
 
 ### For students
-- Search/filter the catalogue with **server-side pagination and sorting**; switch between card and table views.
+- Search the catalogue by title, author, subject or ISBN, with subject chips, shelf/availability filters,
+  **server-side pagination and sorting**, a `/` search shortcut, and card or table views.
 - See live availability, waitlist size and the book's **shelf code**, with a "Locate on map" link.
-- **Visual library map** (`/map`) — a colour-coded 4×3 floor grid; click a shelf to list its books, or open
-  `/map?shelf=A2` to land on a highlighted shelf.
+- **Visual library map** (`/map`) — an architectural floor plan with shelves, aisles, windows and an
+  animated walking route from the entrance; click a shelf to list its books, or open `/map?shelf=A2`
+  to land on a highlighted shelf.
 - Request a copy (atomic reservation) or join the **FIFO waitlist**; pickup countdown turns red under 6 hours.
-- My loans with tabs, reflection composer, cancel actions and confirm dialogs.
+- My loans with tabs, **one-click renewals** (two per loan, blocked when overdue or when another reader is
+  waiting), reflection composer, cancel actions and confirm dialogs.
 - My fines with late/damaged/lost breakdowns and simulated payment.
 - **Reading reflections** (+20 points when approved), skip option, review notes.
 - Personalised **recommendations**, in-app **notifications**, profile/preferred subjects.
 - **Leaderboard** (`/leaderboard`) — top 10 by points, current student highlighted; names and points only.
+- **Quick find** (`⌘K` / `Ctrl+K`) — jump to any page, search the live catalogue by title, author or ISBN,
+  and open a book without leaving the keyboard.
 - Light/dark theme that follows the OS by default and persists the user's choice.
 
 ### For librarians
 - Dashboard with ready-for-pickup, issued, overdue, reflections, fines and copy-status counts.
-- Circulation: issue reserved copies, process returns as good/damaged, mark lost, release expired holds.
+- Circulation: issue reserved copies, process returns as good/damaged, mark lost, release expired holds,
+  and use **desk lookup** by student name/email, book title/author/ISBN or copy ID.
 - **Shelves** (`/librarian/shelves`): create/edit/delete shelves in a row/column grid; non-empty shelves
   return **409**. Full shelves reject book assignment.
-- **Books & copies**: CRUD, shelf assignment, add copies, repair damaged copies, view holders.
+- **Books & copies**: a searchable, filterable management catalogue with summary metrics, plus CRUD,
+  shelf assignment, add copies, repair damaged copies and holder views.
 - Reflections review, waitlist inspection, user administration, fines audit.
+- **Quick find** for staff — search pages and the catalogue, and jump straight to a student's circulation
+  history by name or email.
 - **Reports** (`/librarian/reports`): overdue, popular books, circulation line chart, fines breakdown,
   waitlist pressure, inventory, student leaderboard, CSV download per report.
 - Demo time controls (dev profile + `VITE_DEV_TOOLS=true`) for overdue/pickup-expiry walkthroughs and
@@ -50,7 +59,7 @@ reports.
 |---|---|
 | Backend | Java 21, Spring Boot 3.3.5, Spring Web, Spring Data MongoDB, Spring Security (JWT), Bean Validation, Actuator |
 | Database | MongoDB Atlas (M0/free tier compatible) |
-| Frontend | React 18, Vite 6, React Router 6, Recharts, lucide-react, plain CSS design tokens |
+| Frontend | React 18, Vite 6, React Router 6, Recharts, Phosphor Icons, plain CSS design tokens |
 | Tests | JUnit 5 + Mockito + AssertJ (backend), Vitest + React Testing Library (frontend) |
 | Delivery | Docker/Docker Compose, GitHub Actions, Render, Vercel |
 
@@ -229,8 +238,8 @@ All demo accounts use password **`Password123`**.
 | Librarians | `meera@smartlib.test`, `ravi@smartlib.test` |
 
 The dev seed creates:
-- **12 shelves** in a 4×3 grid across six sections, all 30 books assigned.
-- **30 books / 55 copies** across Computer Science, Mathematics, Physics, Literature, History, Economics.
+- **12 shelves** in a 4×3 grid across six sections, all 60 books assigned.
+- **60 books / 113 copies** across Computer Science, Mathematics, Physics, Literature, History, Economics.
 - **6 students + 2 librarians** with points, preferred subjects and a believable history.
 - Loans in every meaningful state (ISSUED, OVERDUE, READY_FOR_PICKUP, WAITLISTED, REFLECTION_PENDING,
   FINE_PENDING, CLOSED), approved/pending reflections, paid/pending fines, and fulfilled waitlist entries.
@@ -261,7 +270,7 @@ Full request/response reference: **[API.md](API.md)**.
 ## 9. Tests
 
 ```bash
-# Backend unit suite (88 tests)
+# Backend unit suite (95 tests)
 cd backend
 JAVA_HOME=/opt/homebrew/opt/openjdk@21 mvn test
 
@@ -278,7 +287,7 @@ npm run build
 The default backend suite covers:
 shelf capacity/delete rules, report aggregations and CSV headers, pagination envelopes, rate limiting,
 conditional-update race losers, password-hash serialization, loan/waitlist/fine/reflection state machines,
-scheduler idempotency, recommendations and book/copy management.
+self-service renewal rules, scheduler idempotency, recommendations and book/copy management.
 
 The frontend suite covers login validation, protected-route guards, status badge semantics, the countdown
 (including the <6h urgent state), and the books page loading/empty/error/data/card-table states.
@@ -292,7 +301,8 @@ CI: `.github/workflows/ci.yml` runs `mvn test`, `npm test` and `npm run build` o
 - **Shelf capacity is measured in books**, not copies. `PATCH /api/books/{id}/shelf` validates the shelf
   exists and is not full; assigning also moves all copies to the same shelf.
 - Deleting a shelf with books returns **409**; deleting an empty shelf is allowed.
-- The map is a CSS-grid floor plan (`row`, `column`) rather than a calibrated building CAD drawing.
+- The map is an architectural schematic positioned from shelf `row`/`column`; the walking route follows
+  aisle waypoints and is illustrative, not a calibrated building CAD drawing or turn-by-turn navigation.
 - Popular-books and waitlist reports use `$toObjectId` before `$lookup` because loan/waitlist
   `bookId`s are strings while MongoDB `_id`s are ObjectIds.
 - Waitlist queue length is current; the date range only scopes the fulfilled-entry average wait time.
@@ -302,8 +312,12 @@ CI: `.github/workflows/ci.yml` runs `mvn test`, `npm test` and `npm run build` o
 
 ## 11. Design system & accessibility
 
-- CSS variables and a calm academic palette: deep blue primary, warm amber accent, neutral greys.
-- Inter loaded from Google Fonts with a system fallback; light/dark tokens; persisted theme.
+- A reading-room visual system: forest-green primary, brass accent and warm paper neutrals, with complete
+  light/dark token sets and a persisted theme choice.
+- Newsreader display serif paired with Manrope for UI text, both loaded from Google Fonts with system
+  fallbacks; tabular figures for counts, dates and availability.
+- Phosphor Light icons exposed through one local wrapper, so stroke weight, sizing and alignment stay
+  consistent across every page.
 - Shared components under `frontend/src/components/ui`: Button, Input/Select/Textarea, Card, Badge, Modal,
   ConfirmDialog, Toast, Tabs, Table, Pagination, EmptyState, Skeleton, Spinner, Tooltip, PageHeader.
 - Responsive at 360/768/1280 px; hamburger navigation; tables scroll horizontally.

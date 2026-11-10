@@ -1,6 +1,6 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
-import { BookOpen } from 'lucide-react';
+import { BookOpen } from '../components/icons';
 
 export default function NotFoundPage() {
   return (

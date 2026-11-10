@@ -1,6 +1,6 @@
 import React from 'react';
 import { Link, Navigate, Outlet, useLocation } from 'react-router-dom';
-import { BookX } from 'lucide-react';
+import { BookX } from './icons';
 import { useAuth } from '../context/AuthContext';
 
 /** Guards a route by role. No role = any signed-in user. */

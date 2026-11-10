@@ -28,7 +28,8 @@
 1. Open `/` while logged out. Point out the SmartLib explanation: waitlist, points, recommendations, map.
 2. Toggle **dark mode** in the top bar. Refresh; it persists.
 3. Narrow the window to ~375 px; open the hamburger menu. Close it.
-4. Click **Login**.
+4. Press `Ctrl/Cmd+K`, type a title, and show **Quick find** jumping to a book or page. Press Esc.
+5. Click **Login**.
 
 ## 0:40 — Register a fresh student (60 s)
 
@@ -46,8 +47,10 @@
 1. Go to **Browse books**.
 2. Search `Clean Code`. Show the card/table toggle, filters, sorting and page controls.
 3. The card shows **A2** and availability. Click **Locate on map** (or open `/map?shelf=A2`).
-4. On the map, point out the 4×3 grid, colour-coded sections, legend and the pulsing **A2** shelf.
-5. Click **A2**; the shelf's books and availability appear. Click the book to return, or use Back.
+4. On the map, point out the architectural floor plan, colour-coded sections, legend, pulsing **A2**
+   shelf and the animated walking route from the entrance.
+5. Click **A2**; the shelf's books and availability appear and the route redraws. Click the book to
+   return, or use Back.
 6. Request **Clean Code**. It is immediately **READY_FOR_PICKUP** with a 48-hour countdown.
    (If a copy is unavailable, the request joins the FIFO waitlist instead.)
 
@@ -57,6 +60,8 @@
 2. **Circulation** → **Ready for pickup**: find *Demo Reader — Clean Code*.
 3. Click **Issue**. The loan becomes **ISSUED** and moves to the issued section.
 4. Point out the due date and the notification badge on the student side.
+5. Optional (20 s): in the student window, open **My loans** and click **Renew**; the due date extends
+   by 14 days and the row shows `Renewed 1/2`.
 
 ## 4:00 — Simulate time: overdue, fine, return (100 s)
 
@@ -116,8 +121,8 @@ Use *Linear Algebra and Its Applications* (one copy, currently available).
 1. Librarian → **Shelves**: show 12 shelves and book counts. (Optional: create `D4`, then try deleting a
    non-empty shelf and show the 409 message; delete the empty new shelf.)
 2. Librarian → **Books & copies**: assign a book to a shelf and point out that the map updates.
-3. Summarize: atomic reservations, FIFO promotion, conditional transitions, reports, hardened config,
-   tests and deployment docs.
+3. Summarize: self-service renewals, desk lookup/quick find, atomic reservations, FIFO promotion,
+   conditional transitions, reports, hardened config, tests and deployment docs.
 
 ---
 
@@ -126,7 +131,7 @@ Use *Linear Algebra and Its Applications* (one copy, currently available).
 | Check | Expected |
 |---|---|
 | Shelves | 12 in a 4×3 grid |
-| Books / copies | 30 / 55 |
+| Books / copies | 60 / 113 |
 | Overdue loans | 2 (Isha, Neha) |
 | Fines imposed / outstanding | ₹260 / ₹250 |
 | Pending fines | Isha ₹25, Rohan ₹225 |

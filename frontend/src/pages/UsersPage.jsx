@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { UserPlus, Users } from 'lucide-react';
+import { UserPlus, Users } from '../components/icons';
 import { createLibrarian, getAllUsers } from '../api';
 import { useToast } from '../context/ToastContext';
 import { formatDate } from '../utils/format';

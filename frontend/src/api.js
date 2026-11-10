@@ -60,8 +60,8 @@ export const createLibrarian = (body) => request('/users/librarian', { method: '
 export const getAllUsers = () => request('/users');
 
 // ── Books & copies ──
-export function getBooks({ query: q = '', subject = '', availableOnly = false, page = 0, size = 12, sort = 'title' } = {}) {
-  return request(`/books${query({ query: q, subject, availableOnly: availableOnly || undefined, page, size, sort })}`);
+export function getBooks({ query: q = '', subject = '', shelf = '', availableOnly = false, page = 0, size = 12, sort = 'title' } = {}) {
+  return request(`/books${query({ query: q, subject, shelf, availableOnly: availableOnly || undefined, page, size, sort })}`);
 }
 export const getBook = (id) => request(`/books/${id}`);
 export const getSubjects = () => request('/books/subjects');
@@ -87,8 +87,8 @@ export const requestLoan = (bookId) =>
   request('/loans/request', { method: 'POST', body: JSON.stringify({ bookId }) });
 export const getMyLoans = ({ page = 0, size = 20, status = '' } = {}) =>
   request(`/loans${query({ studentId: 'me', status, page, size })}`);
-export const getLoans = ({ studentId = '', status = '', page = 0, size = 20 } = {}) =>
-  request(`/loans${query({ studentId, status, page, size })}`);
+export const getLoans = ({ studentId = '', status = '', q = '', page = 0, size = 20 } = {}) =>
+  request(`/loans${query({ studentId, status, q, page, size })}`);
 export const getLoan = (id) => request(`/loans/${id}`);
 export const issueLoan = (loanId) => request(`/loans/${loanId}/issue`, { method: 'POST' });
 export const returnLoan = (loanId, bookCondition) =>
@@ -99,6 +99,7 @@ export const returnLoan = (loanId, bookCondition) =>
 export const lostLoan = (loanId) => request(`/loans/${loanId}/lost`, { method: 'POST' });
 export const cancelLoan = (loanId) => request(`/loans/${loanId}/cancel`, { method: 'POST' });
 export const skipReflection = (loanId) => request(`/loans/${loanId}/skip-reflection`, { method: 'POST' });
+export const renewLoan = (loanId) => request(`/loans/${loanId}/renew`, { method: 'POST' });
 
 // ── Reflections ──
 export const submitReflection = (loanId, content) =>

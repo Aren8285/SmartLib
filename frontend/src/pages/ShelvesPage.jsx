@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { MapPin, Pencil, Plus, Trash2 } from 'lucide-react';
+import { MapPin, Pencil, Plus, Trash2 } from '../components/icons';
 import { createShelf, deleteShelf, getShelves, updateShelf } from '../api';
 import { useToast } from '../context/ToastContext';
 import {

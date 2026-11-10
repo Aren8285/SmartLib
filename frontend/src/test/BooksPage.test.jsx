@@ -6,11 +6,13 @@ import BooksPage from '../pages/BooksPage';
 
 const getBooks = vi.fn();
 const getSubjects = vi.fn();
+const getShelves = vi.fn();
 const requestLoan = vi.fn();
 
 vi.mock('../api', () => ({
   getBooks: (...args) => getBooks(...args),
   getSubjects: (...args) => getSubjects(...args),
+  getShelves: (...args) => getShelves(...args),
   requestLoan: (...args) => requestLoan(...args),
 }));
 
@@ -43,8 +45,10 @@ describe('BooksPage', () => {
   beforeEach(() => {
     getBooks.mockReset();
     getSubjects.mockReset();
+    getShelves.mockReset();
     requestLoan.mockReset();
     getSubjects.mockResolvedValue(['Computer Science']);
+    getShelves.mockResolvedValue([]);
   });
 
   it('renders skeletons while the first page is loading', () => {

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { ListOrdered } from 'lucide-react';
+import { ListOrdered } from '../components/icons';
 import { getBooks, getWaitlistForBook } from '../api';
 import { formatDateTime } from '../utils/format';
 import {

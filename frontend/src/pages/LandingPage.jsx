@@ -1,8 +1,8 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
 import {
-  ArrowRight, BarChart3, BookOpen, Compass, ListOrdered, Map, Sparkles, Star, Trophy,
-} from 'lucide-react';
+  ArrowRight, BarChart3, BookOpen, Compass, ListOrdered, Map, Moon, Sparkles, Star, Sun, Trophy,
+} from '../components/icons';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { Button } from '../components/ui';
@@ -50,7 +50,7 @@ export default function LandingPage() {
         </Link>
         <div className="row">
           <button type="button" className="icon-btn" onClick={toggleTheme} aria-label="Toggle colour theme">
-            {isDark ? '☀' : '☾'}
+            {isDark ? <Sun size={18} /> : <Moon size={18} />}
           </button>
           {user ? (
             <Link to={home} className="btn btn--primary">Open my dashboard <ArrowRight size={15} /></Link>

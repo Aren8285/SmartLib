@@ -36,11 +36,14 @@ public class LoanController {
      * Paginated loan lists. Students may only query their own loans; librarians
      * can query one student, a status set, or everything.
      * {@code status} accepts a comma-separated list (e.g. CLOSED,RETURNED).
+     * Librarians may also pass {@code q} to search by student name/email, book
+     * title/author/ISBN, or copy id.
      */
     @GetMapping
     public PageResponse<LoanResponse> getLoans(Authentication authentication,
                                                @RequestParam(required = false) String studentId,
                                                @RequestParam(required = false) String status,
+                                               @RequestParam(required = false) String q,
                                                @RequestParam(defaultValue = "0") int page,
                                                @RequestParam(defaultValue = "20") int size) {
         List<LoanStatus> statuses = parseStatuses(status);
@@ -59,7 +62,7 @@ public class LoanController {
         if (resolvedStudent != null) {
             return loanService.getLoansForStudent(resolvedStudent, statuses, page, size);
         }
-        return loanService.getLoansForLibrarian(statuses, page, size);
+        return loanService.getLoansForLibrarian(statuses, q, page, size);
     }
 
     private List<LoanStatus> parseStatuses(String status) {
@@ -120,5 +123,11 @@ public class LoanController {
     @PreAuthorize("hasRole('STUDENT')")
     public LoanResponse skipReflection(@PathVariable String id, Authentication authentication) {
         return loanService.skipReflection(id, authentication.getName());
+    }
+
+    @PostMapping("/{id}/renew")
+    @PreAuthorize("hasRole('STUDENT')")
+    public LoanResponse renewLoan(@PathVariable String id, Authentication authentication) {
+        return loanService.renewLoan(id, authentication.getName());
     }
 }

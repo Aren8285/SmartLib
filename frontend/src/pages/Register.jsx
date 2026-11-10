@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { BookOpen, ShieldCheck, Sparkles, Star } from 'lucide-react';
+import { BookOpen, ShieldCheck, Sparkles, Star } from '../components/icons';
 import { useAuth } from '../context/AuthContext';
 import { getSubjects } from '../api';
 import { Alert, Button, Chip, Input, PageHeader } from '../components/ui';
@@ -74,7 +74,7 @@ export default function Register() {
           <span>SmartLib<span className="brand__sub">University Library</span></span>
         </Link>
         <div>
-          <div className="eyebrow" style={{ color: '#f0c47c' }}>Join the library</div>
+          <div className="eyebrow" style={{ color: '#e9c18c' }}>Join the library</div>
           <h1>Read more. Wait less. Learn together.</h1>
           <p>Student accounts are free. Librarian accounts are created by library staff.</p>
           <ul className="auth-aside__features">

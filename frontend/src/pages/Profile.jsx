@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Save, Star } from 'lucide-react';
+import { Save, Star } from '../components/icons';
 import { getSubjects, updateMe } from '../api';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';

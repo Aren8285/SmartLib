@@ -2,11 +2,12 @@ import React, { useEffect, useState } from 'react';
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
 import {
   BarChart3, BookOpen, BookMarked, ClipboardList, Compass, LayoutDashboard,
-  Library, ListOrdered, LogOut, Map, Menu, Moon, Sun, Users, Wallet, X, PenLine,
-} from 'lucide-react';
+  Library, ListOrdered, LogOut, Map, Menu, Moon, Search, Star, Sun, Users, Wallet, X, PenLine,
+} from './icons';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import NotificationBell from './NotificationBell';
+import CommandPalette from './CommandPalette';
 
 const STUDENT_LINKS = [
   { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -52,15 +53,16 @@ export default function Layout() {
   const { theme, toggleTheme } = useTheme();
   const [menuOpen, setMenuOpen] = useState(false);
   const location = useLocation();
-  const links = user?.role === 'LIBRARIAN' ? LIBRARIAN_LINKS : STUDENT_LINKS;
+  const isLibrarian = user?.role === 'LIBRARIAN';
+  const links = isLibrarian ? LIBRARIAN_LINKS : STUDENT_LINKS;
 
   useEffect(() => { setMenuOpen(false); }, [location.pathname]);
 
   return (
     <div className="app-shell">
-      <header className="topbar">
+      <header className={`topbar ${isLibrarian ? 'topbar--librarian' : ''}`}>
         <div className="topbar__inner">
-          <Link to={user?.role === 'LIBRARIAN' ? '/librarian/dashboard' : '/dashboard'} className="brand" aria-label="SmartLib home">
+          <Link to={isLibrarian ? '/librarian/dashboard' : '/dashboard'} className="brand" aria-label="SmartLib home">
             <span className="brand__mark"><BookOpen size={18} aria-hidden="true" /></span>
             <span>
               SmartLib
@@ -73,8 +75,19 @@ export default function Layout() {
           </nav>
 
           <div className="topbar__actions">
+            <button
+              type="button"
+              className="command-trigger"
+              onClick={() => window.dispatchEvent(new CustomEvent('smartlib:open-command'))}
+              aria-label="Open quick find"
+              title="Quick find (Cmd/Ctrl+K)"
+            >
+              <Search size={15} aria-hidden="true" />
+              <span className="command-trigger__label">Quick find</span>
+              <kbd>⌘K</kbd>
+            </button>
             {user?.role === 'STUDENT' && (
-              <span className="points-pill" title="Loyalty points">★ {user.points} pts</span>
+              <span className="points-pill" title="Loyalty points"><Star size={12} /> {user.points} pts</span>
             )}
             <NotificationBell />
             <button
@@ -122,6 +135,8 @@ export default function Layout() {
           </button>
         </div>
       </div>
+
+      <CommandPalette />
 
       <main className="main">
         <Outlet />
