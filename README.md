@@ -1,8 +1,8 @@
 # SmartLib — University Library Management System
 
-> **Iteration 4 (final)** — a demo-ready, submission-ready library platform with a visual shelf map and
-> walking route, self-service renewals, a keyboard quick-find palette, librarian reports, a shared design
-> system, concurrency/edge-case hardening, production configuration, and a tested full loan lifecycle.
+> Current build — a library platform with a visual shelf map and walking route, self-service renewals,
+> a keyboard quick-find palette, librarian desk lookup and reports, a shared design system,
+> concurrency/edge-case hardening, production configuration, and a tested full loan lifecycle.
 
 SmartLib is a full-stack university library app. Students search the catalogue, locate physical books on
 a floor map, request copies, join FIFO waitlists, pay fines, submit reading reflections and earn points.
